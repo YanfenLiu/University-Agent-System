@@ -640,6 +640,9 @@ def _detect_chat_intent(text: str, current_intent: str = "") -> str:
         return "extract"
     if any(word in text for word in collection_words):
         return "collect"
+    # 已有明确 intent（如 material）时，不被"项目""竞赛"等泛词覆盖
+    if current_intent in {"material", "extract"}:
+        return current_intent
     if requests_new_recommendation or any(word in text for word in ["竞赛", "比赛", "项目"]):
         return "recommendation"
     return current_intent
