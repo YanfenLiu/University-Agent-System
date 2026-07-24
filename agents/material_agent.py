@@ -450,6 +450,38 @@ class MaterialAgent:
             inference_note = ""
             diag["inference_used"] = False
 
+        # ---- Step 2.5: 通用模板 → 竞赛专属模板升级 ----
+        _generic_to_specific = {
+            "generic_project_report": {
+                "小挑": "challenge_cup_business_plan", "创业计划": "challenge_cup_business_plan",
+                "大挑": "challenge_cup_grand_report_invention", "课外学术": "challenge_cup_grand_report_invention",
+                "互联网": "innovation_contest_business_plan", "中国国际": "innovation_contest_business_plan",
+            },
+            "generic_ppt": {
+                "小挑": "challenge_cup_business_ppt", "创业计划": "challenge_cup_business_ppt",
+                "大挑": "challenge_cup_grand_ppt", "课外学术": "challenge_cup_grand_ppt",
+                "互联网": "innovation_contest_ppt", "中国国际": "innovation_contest_ppt",
+            },
+            "generic_application_form": {
+                "小挑": "challenge_cup_business_application", "创业计划": "challenge_cup_business_application",
+                "大挑": "challenge_cup_grand_application", "课外学术": "challenge_cup_grand_application",
+                "互联网": "innovation_contest_application_form", "中国国际": "innovation_contest_application_form",
+            },
+        }
+        upgrade_map = _generic_to_specific.get(material_type, {})
+        if upgrade_map and competition_info:
+            comp_text = (
+                competition_info.get("competition_name", "")
+                or competition_info.get("title", "")
+                or competition_info.get("competition_type", "")
+            )
+            for keyword, specific_type in upgrade_map.items():
+                if keyword in comp_text:
+                    material_type = specific_type
+                    diag["material_type_upgraded"] = material_type
+                    inference_note = f"（升级为竞赛专属模板：{keyword}→{material_type}）"
+                    break
+
         # ---- Step 3: 预检关键字段，缺太多则追问 ----
         missing_check = self._check_missing_fields(project_info, material_type, user_profile)
         diag["missing_check_triggered"] = missing_check["need_input"]
