@@ -610,9 +610,9 @@ def _detect_chat_intent(text: str, current_intent: str = "") -> str:
         "论文", "调查报告", "视频脚本", "路演", "预算", "经费", "团队分工", "分工",
     ]
     material_query_words = [
-        "需要什么材料", "准备什么材料", "有什么材料", "需要准备什么",
-        "要准备什么", "需要哪些材料", "准备哪些材料", "需要什么",
-        "用什么材料", "材料有哪些",
+        "准备材料", "需要准备", "需要什么", "需要哪些",
+        "准备什么", "准备哪些", "要准备", "有什么材料",
+        "怎么准备", "如何准备", "该准备", "备赛",
     ]
     general_material_words = ["材料", "资料", "文档", "申报书", "备赛"]
     generation_words = ["生成", "制作", "撰写", "写一份", "准备", "帮我做", "想要"]
@@ -1901,12 +1901,14 @@ def chat_submit(message, history, state):
 
     history.append({"role": "user", "content": message})
     main_agent = MainAgent(config=load_config())
-    # 材料生成：已指定类型+基本信息→跳过会话控制，直接进 MaterialAgent
+    # 材料生成：state已就绪 或 当前消息是材料相关提问 → 跳过控制，进 MaterialAgent
+    wants_material_now = _detect_chat_intent(message, state.get("intent", "")) == "material"
     skip_control = (
-        state.get("intent") == "material"
-        and state.get("material_type")
-        and state.get("major")
-        and state.get("grade")
+        (state.get("intent") == "material"
+         and state.get("material_type")
+         and state.get("major")
+         and state.get("grade"))
+        or (wants_material_now and state.get("major") and state.get("grade"))
     )
     control = None if skip_control else main_agent.handle_conversation_control(message, state)
     if control:
