@@ -105,6 +105,7 @@ export function useAgentChat() {
       major: mergedProfile.major,
       interests: mergedProfile.interests,
       goal: mergedProfile.goal,
+      last_recommendations: backendRecommendations,
     };
 
     try {

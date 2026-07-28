@@ -71,6 +71,109 @@ class AgentRunResponse(BaseModel):
     response: dict[str, Any]
 
 
+MATERIAL_KEYWORDS = (
+    "材料", "申报书", "申请书", "报名表", "计划书", "商业计划书",
+    "路演稿", "答辩稿", "简历", "项目书",
+)
+
+
+def _resolve_api_task_type(
+    requested_task_type: str,
+    user_text: str,
+    understanding: dict[str, Any] | None,
+) -> str:
+    """Resolve a concrete task instead of running ``full_process`` every turn."""
+    understood_intent = str((understanding or {}).get("intent") or "").strip().lower()
+    if understood_intent in {"material", "generate_material"}:
+        return "material"
+    if understood_intent in {"recommendation", "recommend"}:
+        return "recommendation"
+    if understood_intent in {"collect", "info_collect"}:
+        return "info_collect"
+    if understood_intent in {"extract", "info_extract"}:
+        return "info_extract"
+
+    text = str(user_text or "").strip()
+    if any(keyword in text for keyword in MATERIAL_KEYWORDS):
+        return "material"
+
+    requested = str(requested_task_type or "").strip().lower()
+    # The current Pages client historically sent full_process for every turn.
+    # Recommendation is the safe default; material generation must be explicit.
+    if requested in {"", "full_process", "application_assistant", "mvp_demo"}:
+        return "recommendation"
+    return requested
+
+
+def _context_recommendations(context: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = context.get("last_recommendations", [])
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _select_context_recommendation(
+    user_text: str,
+    recommendations: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Select a prior recommendation by ordinal or title."""
+    if not recommendations:
+        return None
+    text = str(user_text or "").strip()
+    ordinal_map = {
+        "第一个": 0, "第一项": 0, "1": 0,
+        "第二个": 1, "第二项": 1, "2": 1,
+        "第三个": 2, "第三项": 2, "3": 2,
+    }
+    for marker, index in ordinal_map.items():
+        if marker in text and index < len(recommendations):
+            return recommendations[index]
+    for row in recommendations:
+        title = str(row.get("title") or row.get("name") or "").strip()
+        if title and title in text:
+            return row
+    return None
+
+
+def _material_project_info(row: dict[str, Any]) -> dict[str, Any]:
+    """Map the Pages recommendation shape to MaterialAgent project_info."""
+    return {
+        **row,
+        "title": row.get("title") or row.get("name") or "未命名竞赛",
+        "summary": row.get("summary") or row.get("description") or "",
+        "source_url": row.get("source_url") or row.get("officialUrl") or "",
+    }
+
+
+def _need_material_selection(
+    recommendations: list[dict[str, Any]],
+) -> AgentRunResponse:
+    if recommendations:
+        choices = "\n".join(
+            f"{index}. {row.get('title') or row.get('name') or '未命名竞赛'}"
+            for index, row in enumerate(recommendations[:5], 1)
+        )
+        text = (
+            "可以生成，但需要先确定你要为哪一个竞赛准备材料。"
+            "请回复序号或竞赛名称：\n\n"
+            f"{choices}"
+        )
+    else:
+        text = (
+            "可以生成材料。请先告诉我具体的竞赛或项目名称，"
+            "并提供已有的通知、申报要求或项目简介。"
+        )
+    return AgentRunResponse(
+        success=False,
+        response={
+            "text": text,
+            "type": "need_input",
+            "files": [],
+            "recommendations": recommendations[:5],
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # 构建 MainAgent.run() 标准输入
 # ---------------------------------------------------------------------------
@@ -155,13 +258,48 @@ def run_agent(req: AgentRunRequest) -> AgentRunResponse:
         major = str(profile.get("major") or "").strip()
         grade = str(profile.get("grade") or "").strip()
 
-        task_type = (req.task_type or "full_process").strip().lower()
-        needs_profile = task_type in {"full_process", "recommend", "recommendation"}
-
         # ---------------------------------------------------------------
         # 用户画像增强：从 user_input 中补充缺失的字段
         # ---------------------------------------------------------------
         user_text = str(req.user_input or "").strip()
+
+        config = load_config()
+        agent = MainAgent(config=config)
+        conversation_state = {
+            **(req.context or {}),
+            **(req.user_profile or {}),
+            "turns": [
+                str(turn.get("content") or "")
+                for turn in req.history
+                if isinstance(turn, dict) and turn.get("role") == "user"
+            ],
+        }
+
+        control = agent.handle_conversation_control(user_text, conversation_state)
+        if control:
+            return AgentRunResponse(
+                success=True,
+                response={
+                    "text": control.get("data", {}).get(
+                        "final_answer",
+                        control.get("message", ""),
+                    ),
+                    "type": "agent",
+                    "files": [],
+                    "recommendations": [],
+                },
+            )
+
+        understanding = agent.understand_conversation_turn(
+            user_text,
+            conversation_state,
+        )
+        resolved_task_type = _resolve_api_task_type(
+            req.task_type,
+            user_text,
+            understanding,
+        )
+        needs_profile = resolved_task_type in {"recommend", "recommendation"}
 
         if needs_profile and not major:
             # 前端未传递专业信息，由后端自行从原始输入中提取
@@ -201,14 +339,23 @@ def run_agent(req: AgentRunRequest) -> AgentRunResponse:
                 req.user_profile["goal"] = extracted_goal
                 logger.info(f"  [画像增强] 从 user_input 提取 goal: {extracted_goal}")
 
-        config = load_config()
-        agent = MainAgent(config=config)
+        resolved_input_data = dict(req.input_data or {})
+        if resolved_task_type == "material" and not resolved_input_data.get("project_info"):
+            previous_recommendations = _context_recommendations(req.context or {})
+            selected = _select_context_recommendation(
+                req.user_input,
+                previous_recommendations,
+            )
+            if selected is None:
+                return _need_material_selection(previous_recommendations)
+            resolved_input_data["project_info"] = _material_project_info(selected)
+
         standard_input = build_minimal_input(
             user_input=req.user_input,
-            task_type=req.task_type,
+            task_type=resolved_task_type,
             user_profile=req.user_profile,
             context=req.context,
-            input_data=req.input_data,
+            input_data=resolved_input_data,
             history=req.history,
         )
 
@@ -218,6 +365,7 @@ def run_agent(req: AgentRunRequest) -> AgentRunResponse:
         logger.info("[STEP 2] 构造的 standard_input 传给 MainAgent")
         logger.info(f"  user_input:     {repr(standard_input.get('user_input'))}")
         logger.info(f"  task_type:      {repr(standard_input.get('task_type'))}")
+        logger.info(f"  understanding:  {json.dumps(understanding, ensure_ascii=False)}")
         logger.info(f"  user_profile:   {json.dumps(standard_input.get('user_profile'), ensure_ascii=False)}")
         logger.info(f"  input_data keys: {list(standard_input.get('input_data', {}).keys())}")
 
