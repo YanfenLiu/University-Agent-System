@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -1024,12 +1024,19 @@ If no agent is needed, selected_agents must be empty.
 
         if sources:
             payload["sources"] = sources
-        # keywords 按用户输入为准，不自动填充
+                # keywords 按用户输入为准，不自动填充
         # 空 keywords 在 Crawler._match() 中会匹配全部条目
         if "keywords" not in payload:
-            user_input = str(original_input.get("user_input", "")).strip()
-            if user_input and user_input not in ("都可以", "随便", "不限", "", "全部", "所有"):
-                payload["keywords"] = [user_input]
+            # 用 user_profile.interests 构建关键词，而非整段用户输入
+            profile_keywords = self._collection_keywords_from_profile(
+                original_input.get("user_profile", {})
+            )
+            if profile_keywords:
+                payload["keywords"] = profile_keywords
+            else:
+                user_input = str(original_input.get("user_input", "")).strip()
+                if user_input and user_input not in ("都可以", "随便", "不限", "", "全部", "所有"):
+                    payload["keywords"] = [user_input]
         return payload
 
     @staticmethod
@@ -1253,6 +1260,15 @@ If no agent is needed, selected_agents must be empty.
                 "这轮没有找到符合当前专业方向和竞赛级别的有效候选，因此暂时没有推荐结果。"
                 "你可以放宽级别，或者允许本专业相关的交叉方向，我再重新查找。"
             )
+        if recommendations and any(status == "success" for status in statuses):
+            names = "、".join(
+                r.get("title", "")
+                for r in recommendations[:3]
+                if isinstance(r, dict) and r.get("title")
+            )
+            if all(status == "success" for status in statuses):
+                return f"已为你推荐以下竞赛：{names}。你可以继续问我其中某个竞赛的详情，或者选择一个项目准备报名材料。"
+            return f"已为你推荐以下竞赛：{names}。部分竞赛的详细信息可能不够完整，建议以官网通知为准。"
         if all(status == "success" for status in statuses):
             return "已经处理完成。你可以继续问我其中某个竞赛的详情，或者选择一个项目准备报名材料。"
         if any(status == "success" for status in statuses):

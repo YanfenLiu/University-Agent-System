@@ -309,12 +309,24 @@ class InfoCollectAgent:
             if stale_srcs:
                 self._start_background_crawl(keywords, stale_srcs, task_id, self.config)
 
-            # 语义搜索 — 直接在已有数据上搜，不等爬虫
+                        # 语义搜索或关键词匹配 — 限制返回条数，避免下游处理271条全量数据
             if hasattr(storage, "search_semantic") and user_intent:
                 logger.info("语义搜索: '%s'", user_intent[:80])
                 matched = storage.search_semantic(user_intent, limit=max_results)
+            elif keywords:
+                # 本地 JSON 存储无语义搜索能力，用关键词匹配 title/description/organizer
+                logger.info("关键词匹配: %s (上限 %d 条)", keywords, max_results)
+                matched = storage.search(keywords, limit=max_results)
+                if not matched and user_intent:
+                    # 关键词未匹配 → 用最新 max_results 条兜底
+                    logger.info("关键词无匹配，取最新 %d 条", max_results)
+                    all_sorted = sorted(cached_all, key=lambda x: x.get('collected_at', ''), reverse=True)
+                    matched = all_sorted[:max_results]
             else:
-                matched = cached_all
+                # 没有关键词也没有意图 → 取最新 max_results 条
+                logger.info("无搜索意图，取最新 %d 条", max_results)
+                all_sorted = sorted(cached_all, key=lambda x: x.get('collected_at', ''), reverse=True)
+                matched = all_sorted[:max_results]
             all_items.extend(matched)
             all_stats["web"]["matched"] = len(matched)
 
