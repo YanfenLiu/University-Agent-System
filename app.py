@@ -609,7 +609,12 @@ def _detect_chat_intent(text: str, current_intent: str = "") -> str:
         "申报书", "申报表", "策划书", "研究报告", "项目报告",
         "论文", "调查报告", "视频脚本", "路演", "预算", "经费", "团队分工", "分工",
     ]
-    general_material_words = ["材料", "资料", "文档", "申报书"]
+    material_query_words = [
+        "需要什么材料", "准备什么材料", "有什么材料", "需要准备什么",
+        "要准备什么", "需要哪些材料", "准备哪些材料", "需要什么",
+        "用什么材料", "材料有哪些",
+    ]
+    general_material_words = ["材料", "资料", "文档", "申报书", "备赛"]
     generation_words = ["生成", "制作", "撰写", "写一份", "准备", "帮我做", "想要"]
     recommendation_words = ["推荐", "匹配", "适合", "筛选", "重新找", "换一批"]
     extraction_words = ["提取", "抽取", "解析", "整理通知", "报名要求"]
@@ -621,6 +626,7 @@ def _detect_chat_intent(text: str, current_intent: str = "") -> str:
     )
     wants_material = not cancels_material and (
         any(word in text for word in strong_material_words)
+        or any(word in text for word in material_query_words)
         or (
             any(word in text for word in general_material_words)
             and any(word in text for word in generation_words)
@@ -1367,6 +1373,17 @@ def _update_chat_state(
         "团队分工": "generic_team_description", "分工": "generic_team_description",
         "谁做什么": "generic_team_description", "怎么分工": "generic_team_description",
         "人员安排": "generic_team_description", "角色分配": "generic_team_description",
+        # 备赛/准备
+        "备战计划": "generic_prep_plan", "备赛": "generic_prep_plan",
+        "学习计划": "generic_prep_plan", "复习计划": "generic_prep_plan",
+        "怎么准备": "generic_prep_plan", "如何备赛": "generic_prep_plan",
+        # 项目简述/作品说明
+        "项目简述": "generic_project_brief", "作品简述": "generic_project_brief",
+        "项目简介": "generic_project_brief", "作品说明": "generic_project_brief",
+        # 组队建议
+        "组队": "generic_team_building", "怎么组队": "generic_team_building",
+        "找队友": "generic_team_building", "组队建议": "generic_team_building",
+        "组队方案": "generic_team_building", "队伍配置": "generic_team_building",
     }
     for keyword, material_type in material_map.items():
         if keyword in fact_text:
@@ -1705,6 +1722,27 @@ def _next_chat_question(state: dict[str, Any]) -> str | None:
         if not state.get("project_name") and len(recommendations) == 1:
             state["project_name"] = str(recommendations[0].get("title", ""))
         if not state.get("material_type"):
+            # 调用 MaterialAgent 获取竞赛专属材料建议
+            project_name = state.get("project_name", "")
+            if project_name:
+                try:
+                    agent = MainAgent(config=load_config())
+                    if "material" in agent.sub_agents:
+                        mat_agent = agent.sub_agents["material"]
+                        if not isinstance(mat_agent, dict):
+                            suggestions = mat_agent.suggest_materials(project_name)
+                            materials = suggestions.get("materials", [])
+                            if materials:
+                                lines = [f"根据「{project_name}」，建议准备以下材料："]
+                                for i, (mt, name, note) in enumerate(materials, 1):
+                                    line = f"  {i}. {name}"
+                                    if note:
+                                        line += f"（{note}）"
+                                    lines.append(line)
+                                lines.append("\n回复序号或名称即可生成，也可以直接说「生成简历」等。")
+                                return "\n".join(lines)
+                except Exception:
+                    pass
             return "目标竞赛确定了。接下来想准备哪种材料？报名表、报名简历、计划书、PPT 或材料清单都可以。"
     if state["intent"] == "extract" and not state.get("notification_text"):
         return "好的，把竞赛通知全文粘贴过来就行，我会帮你整理关键信息和报名要求。"
