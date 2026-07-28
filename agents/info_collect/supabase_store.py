@@ -115,17 +115,20 @@ class SupabaseStore:
                 )
             return
 
+        def _pg_run_ddl(ddl: str):
+            pg = __import__("psycopg2")  # noqa: F811
+            dsn = _build_pg_dsn(supabase_url, password)
+            conn = pg.connect(dsn)
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(ddl)
+            conn.close()
+
         if needs_tables:
             try:
-                import psycopg2
-                dsn = _build_pg_dsn(supabase_url, password)
-                conn = psycopg2.connect(dsn)
-                conn.autocommit = True
-                with conn.cursor() as cur:
-                    cur.execute(_COMPETITIONS_DDL)
-                    cur.execute(_CRAWL_LOGS_DDL)
-                    cur.execute(_INDEX_DDL)
-                conn.close()
+                _pg_run_ddl(_COMPETITIONS_DDL)
+                _pg_run_ddl(_CRAWL_LOGS_DDL)
+                _pg_run_ddl(_INDEX_DDL)
                 logger.info("Supabase 表 + 索引已自动创建")
             except Exception as exc:
                 logger.warning(
@@ -133,15 +136,8 @@ class SupabaseStore:
                     exc, _COMPETITIONS_DDL, _CRAWL_LOGS_DDL, _INDEX_DDL,
                 )
         else:
-            # 表存在 → 确保索引也在
             try:
-                import psycopg2
-                dsn = _build_pg_dsn(supabase_url, password)
-                conn = psycopg2.connect(dsn)
-                conn.autocommit = True
-                with conn.cursor() as cur:
-                    cur.execute(_INDEX_DDL)
-                conn.close()
+                _pg_run_ddl(_INDEX_DDL)
                 logger.info("索引已就绪: idx_competitions_collected_at")
             except Exception as exc:
                 logger.debug("索引创建跳过 (%s), 可手动: %s", exc, _INDEX_DDL)
