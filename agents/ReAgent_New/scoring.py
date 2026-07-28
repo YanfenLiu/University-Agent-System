@@ -123,9 +123,7 @@ def score_interest(
     item: dict,
     synonym_groups: list = None,
 ) -> Tuple[float, List[str]]:
-    """维度三：兴趣匹配度（旧版离散阈值）。
-
-    overlap >= 2 → 100, overlap == 1 → 70, else → 10
+    """维度三：兴趣连续分 = 100 * overlap / max(|U|, |T|, 1)。
 
     Returns:
         (score, matched_interest_signals)
@@ -146,15 +144,8 @@ def score_interest(
     overlap, signals = conceptual_overlap_detail(
         user_interests, tags, synonym_groups
     )
-
-    if overlap >= 2:
-        score = 100.0
-    elif overlap == 1:
-        score = 70.0
-    else:
-        score = 10.0
-
-    return score, signals
+    denom = max(len(user_interests), len(tags), 1)
+    return _clamp(100.0 * overlap / denom), signals
 
 
 def has_related_experience(user: dict, item: dict, corpus: str = None) -> bool:
@@ -183,10 +174,7 @@ def score_ability(
     corpus: str = None,
     skill_normalize: Optional[dict] = None,
 ) -> Tuple[float, List[str], List[str]]:
-    """维度四：能力匹配度（旧版离散阈值）。
-
-    离散阈值: ratio>=0.8+经验→100, >=0.5+经验→75, >=0.5→65,
-              >0+经验→60, >0→50, 有经验→45, else→25
+    """维度四：能力连续分 ≈ 100 * matched/required，相关经历软加分。
 
     Returns:
         (score, matched_skill_signals, unmatched_skill_signals)
@@ -210,27 +198,18 @@ def score_ability(
         user_skills, required, corpus, skill_normalize
     )
     ratio = overlap / total if total > 0 else 0.0
-
-    if ratio >= 0.8 and related:
-        score = 100.0
-    elif ratio >= 0.5 and related:
-        score = 75.0
-    elif ratio >= 0.5:
-        score = 65.0
-    elif ratio > 0 and related:
-        score = 60.0
-    elif ratio > 0:
-        score = 50.0
-    elif related:
-        score = 45.0
-    else:
-        score = 25.0
+    score = 100.0 * ratio
+    if related:
+        if score <= 0:
+            score = 45.0
+        else:
+            score = min(100.0, score + 15.0)
 
     matched_signals = [f"技能命中:{s}" for s in matched]
     if related and not matched_signals:
         matched_signals.append("能力:有相关竞赛/科研经历")
     unmatched_signals = [f"技能未命中:{s}" for s in unmatched]
-    return score, matched_signals, unmatched_signals
+    return _clamp(score), matched_signals, unmatched_signals
 
 
 def score_deadline(
