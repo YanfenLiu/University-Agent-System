@@ -159,38 +159,34 @@ class SupabaseStore:
         return result.count > 0
 
     def upsert_item(self, item: dict) -> str:
-        """插入或更新一条竞赛记录。去重键 = url + source。返回 'new' | 'updated'。"""
-        is_new = not self.exists(item["url"], item["source"])
+        """插入或更新一条竞赛记录。去重键 = url + source。返回 'new' | 'updated'。
 
-        if is_new:
-            self._insert(item)
-            return "new"
-        else:
-            self._update(item)
+        新记录同时写入 collected_at 和 updated_at；已有记录（同 url + source）
+        只刷新 updated_at，保留原始 collected_at，确保新鲜度计算不偏离。
+        """
+        row = self._to_row(item)
+        now = datetime.now().isoformat()
+        url = item["url"]
+        source = item["source"]
+
+        if self.exists(url, source):
+            resp = (
+                self.client.table("competitions")
+                .update({"updated_at": now})
+                .eq("url", url)
+                .eq("source", source)
+                .execute()
+            )
+            if resp.data:
+                logger.info("Supabase 更新: %s", item.get("title", "")[:40])
             return "updated"
 
-    def _insert(self, item: dict):
-        row = self._to_row(item)
-        row["collected_at"] = datetime.now().isoformat()
-        row["updated_at"] = row["collected_at"]
-
+        row["collected_at"] = now
+        row["updated_at"] = now
         resp = self.client.table("competitions").insert(row).execute()
         if resp.data:
-            logger.info("Supabase 插入成功: %s", item.get("title", "")[:40])
-
-    def _update(self, item: dict):
-        row = self._to_row(item)
-        row["updated_at"] = datetime.now().isoformat()
-
-        resp = (
-            self.client.table("competitions")
-            .update(row)
-            .eq("url", item["url"])
-            .eq("source", item["source"])
-            .execute()
-        )
-        if resp.data:
-            logger.info("Supabase 更新成功: %s", item.get("title", "")[:40])
+            logger.info("Supabase 插入: %s", item.get("title", "")[:40])
+        return "new"
 
     def get_all_items(self, source: Optional[str] = None) -> list[dict]:
         """返回所有竞赛记录，可按来源过滤。
