@@ -117,7 +117,7 @@ class SupabaseStore:
 
         if needs_tables:
             try:
-                import psycopg2
+                psycopg2 = __import__("psycopg2")
                 dsn = _build_pg_dsn(supabase_url, password)
                 conn = psycopg2.connect(dsn)
                 conn.autocommit = True
@@ -135,7 +135,7 @@ class SupabaseStore:
         else:
             # 表存在 → 确保索引也在
             try:
-                import psycopg2
+                psycopg2 = __import__("psycopg2")
                 dsn = _build_pg_dsn(supabase_url, password)
                 conn = psycopg2.connect(dsn)
                 conn.autocommit = True
