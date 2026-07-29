@@ -181,12 +181,13 @@ export function AIRecommendation() {
 
         {/* 右侧：Agent 状态 + 用户画像 */}
         <Col xs={24} md={8}>
-          <div
+                    <div
             style={{
               height: "100%",
               display: "flex",
               flexDirection: "column",
-              gap: 16
+              gap: 16,
+              overflow: "auto"
             }}
           >
             <AgentStatusCard
