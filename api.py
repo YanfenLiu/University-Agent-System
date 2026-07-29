@@ -8,15 +8,17 @@
 from __future__ import annotations
 
 import logging
+import os
 import secrets
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from supabase import create_client
 
 from agents.main_agent import MainAgent
 
@@ -69,6 +71,16 @@ class AgentRunResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class CompetitionListResponse(BaseModel):
+    """Supabase 竞赛列表分页响应。"""
+    success: bool = True
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 200
+    source: str = "supabase"
+
+
 # ---------------------------------------------------------------------------
 # FastAPI 应用实例
 # ---------------------------------------------------------------------------
@@ -107,6 +119,51 @@ def download_generated_file(token: str) -> FileResponse:
     if path is None or not path.is_file():
         raise HTTPException(status_code=404, detail="Generated file not found.")
     return FileResponse(path, filename=path.name)
+
+
+@app.get("/api/competitions", response_model=CompetitionListResponse)
+def list_competitions(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(200, ge=1, le=500),
+) -> CompetitionListResponse:
+    """Return the live competition rows used by the backend agents."""
+    url = os.getenv("SUPABASE_URL", "").strip()
+    key = os.getenv("SUPABASE_ANON_KEY", "").strip()
+    if not url or not key:
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase environment variables are not configured.",
+        )
+
+    start = (page - 1) * page_size
+    end = start + page_size - 1
+    try:
+        result = (
+            create_client(url, key)
+            .table("competitions")
+            .select(
+                "id,title,url,source,description,organizer,"
+                "regist_end,contest_end,category,level,collected_at,updated_at",
+                count="exact",
+            )
+            .neq("source", "permission_test")
+            .order("collected_at", desc=True)
+            .range(start, end)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Supabase competition query failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Competition database is temporarily unavailable.",
+        ) from exc
+
+    return CompetitionListResponse(
+        items=result.data or [],
+        total=int(result.count or 0),
+        page=page,
+        page_size=page_size,
+    )
 
 
 def _register_generated_files(result: dict[str, Any]) -> None:
