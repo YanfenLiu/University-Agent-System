@@ -39,6 +39,26 @@ CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 DOWNLOAD_REGISTRY: dict[str, Path] = {}
 
 
+def _first_configured_env(*names: str) -> str:
+    """Return the first non-empty value from compatible environment names."""
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _supabase_api_config() -> tuple[str, str]:
+    """Read Supabase API credentials, including names used by the old Vite app."""
+    url = _first_configured_env("SUPABASE_URL", "VITE_SUPABASE_URL")
+    key = _first_configured_env(
+        "SUPABASE_ANON_KEY",
+        "VITE_SUPABASE_ANON_KEY",
+        "SUPABASE_KEY",
+    )
+    return url, key
+
+
 def load_config() -> dict:
     """加载 YAML 配置，失败时返回空 dict。"""
     if not CONFIG_PATH.exists():
@@ -127,12 +147,20 @@ def list_competitions(
     page_size: int = Query(200, ge=1, le=500),
 ) -> CompetitionListResponse:
     """Return the live competition rows used by the backend agents."""
-    url = os.getenv("SUPABASE_URL", "").strip()
-    key = os.getenv("SUPABASE_ANON_KEY", "").strip()
+    url, key = _supabase_api_config()
     if not url or not key:
+        missing = []
+        if not url:
+            missing.append("SUPABASE_URL")
+        if not key:
+            missing.append("SUPABASE_ANON_KEY")
+        logger.error(
+            "Supabase configuration missing: %s. Configure these on the backend service.",
+            ", ".join(missing),
+        )
         raise HTTPException(
             status_code=503,
-            detail="Supabase environment variables are not configured.",
+            detail=f"Supabase backend configuration is missing: {', '.join(missing)}.",
         )
 
     start = (page - 1) * page_size
