@@ -18,3 +18,5 @@ services:
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
+      # Existing deployments may still use VITE_SUPABASE_URL and
+      # VITE_SUPABASE_ANON_KEY; api.py accepts both naming schemes.

@@ -181,6 +181,44 @@ def test_competitions_api_reads_paginated_supabase_rows(monkeypatch):
     assert result.source == "supabase"
 
 
+def test_competitions_api_accepts_existing_vite_supabase_names(monkeypatch):
+    class FakeResult:
+        data = []
+        count = 0
+
+    class FakeQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def neq(self, *_args, **_kwargs):
+            return self
+
+        def order(self, *_args, **_kwargs):
+            return self
+
+        def range(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResult()
+
+    class FakeClient:
+        def table(self, name):
+            assert name == "competitions"
+            return FakeQuery()
+
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_ANON_KEY", raising=False)
+    monkeypatch.setenv("VITE_SUPABASE_URL", "https://legacy.supabase.co")
+    monkeypatch.setenv("VITE_SUPABASE_ANON_KEY", "legacy-key")
+    monkeypatch.setattr(api, "create_client", lambda *_: FakeClient())
+
+    result = api.list_competitions(page=1, page_size=2)
+
+    assert result.success is True
+    assert result.total == 0
+
+
 def test_profile_collection_groups_preferences_and_fills_remaining(monkeypatch):
     agent = _agent()
     turns = iter(
