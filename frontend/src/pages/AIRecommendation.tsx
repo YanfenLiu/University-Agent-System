@@ -53,7 +53,7 @@ export function AIRecommendation() {
     >
       {/* 页面标题 */}
       <div>
-        <Typography.Title level={2} style={{ marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+         <Typography.Title level={2} style={{ marginTop: 2, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
           <RobotOutlined style={{ color: colorPrimary }} />
           赛智通 AI竞赛智能体
         </Typography.Title>
