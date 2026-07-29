@@ -128,6 +128,59 @@ def test_internal_orchestration_message_is_not_exposed():
     assert "补充" in text
 
 
+def test_competitions_api_reads_paginated_supabase_rows(monkeypatch):
+    rows = [
+        {
+            "id": 1,
+            "title": "人工智能竞赛",
+            "url": "https://example.com/1",
+            "source": "saikr",
+        },
+        {
+            "id": 2,
+            "title": "数学建模竞赛",
+            "url": "https://example.com/2",
+            "source": "datafountain",
+        },
+    ]
+
+    class FakeResult:
+        data = rows
+        count = 2
+
+    class FakeQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def neq(self, *_args, **_kwargs):
+            return self
+
+        def order(self, *_args, **_kwargs):
+            return self
+
+        def range(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResult()
+
+    class FakeClient:
+        def table(self, name):
+            assert name == "competitions"
+            return FakeQuery()
+
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test-key")
+    monkeypatch.setattr(api, "create_client", lambda *_: FakeClient())
+
+    result = api.list_competitions(page=1, page_size=2)
+
+    assert result.success is True
+    assert result.total == 2
+    assert result.items == rows
+    assert result.source == "supabase"
+
+
 def test_profile_collection_groups_preferences_and_fills_remaining(monkeypatch):
     agent = _agent()
     turns = iter(

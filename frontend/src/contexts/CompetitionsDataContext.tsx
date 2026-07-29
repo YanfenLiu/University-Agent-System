@@ -1,7 +1,7 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 
 import { type Competition } from '../services/competitions';
-import { fetchCompetitions } from '../services/dataLoader';
+import { fetchCompetitions, refreshCompetitions } from '../services/dataLoader';
 
 /* ===== Context ===== */
 
@@ -9,6 +9,7 @@ interface CompetitionsDataContextType {
   competitions: Competition[];
   loading: boolean;
   error: string | null;
+  refresh: () => Promise<void>;
 }
 
 const CompetitionsDataContext = createContext<CompetitionsDataContextType | null>(null);
@@ -21,6 +22,21 @@ export function CompetitionsDataProvider({ children }: { children: ReactNode }) 
   const [competitions, setCompetitions] = useState<Competition[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await refreshCompetitions();
+      setCompetitions(data);
+      setError(data.length > 0 ? null : '暂无竞赛数据');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '更新竞赛数据失败';
+      setError(msg);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,7 +74,7 @@ export function CompetitionsDataProvider({ children }: { children: ReactNode }) 
   }, []);
 
   return (
-    <CompetitionsDataContext.Provider value={{ competitions, loading, error }}>
+    <CompetitionsDataContext.Provider value={{ competitions, loading, error, refresh }}>
       {children}
     </CompetitionsDataContext.Provider>
   );
@@ -96,4 +112,13 @@ export function useCompetitionsError(): string | null {
     throw new Error('useCompetitionsError must be used within CompetitionsDataProvider');
   }
   return ctx.error;
+}
+
+/** 未来“更新竞赛库”按钮调用：后端更新完成后强制同步 Supabase 数据。 */
+export function useRefreshCompetitions(): () => Promise<void> {
+  const ctx = useContext(CompetitionsDataContext);
+  if (!ctx) {
+    throw new Error('useRefreshCompetitions must be used within CompetitionsDataProvider');
+  }
+  return ctx.refresh;
 }

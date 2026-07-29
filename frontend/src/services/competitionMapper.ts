@@ -1,5 +1,19 @@
 import type { Competition, CompetitionDifficulty } from './competitions';
-import type { SupabaseCompetitionRow } from './supabaseClient';
+
+export interface SupabaseCompetitionRow {
+  id: number;
+  title: string;
+  url: string;
+  source?: string;
+  description?: string;
+  organizer?: string;
+  regist_end?: string;
+  contest_end?: string;
+  category?: string;
+  level?: string;
+  collected_at?: string;
+  updated_at?: string;
+}
 
 /**
  * 将数据库行映射为前端的 Competition 类型

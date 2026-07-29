@@ -1,62 +1,71 @@
 import type { Competition } from './competitions';
-import { fetchCompetitionsFromSupabase } from './supabaseService';
-import { mapRowToCompetition } from './competitionMapper';
-import type { SupabaseCompetitionRow } from './supabaseClient';
+import { mapRowToCompetition, type SupabaseCompetitionRow } from './competitionMapper';
+import { request } from './apiClient';
 
-// 在 Vite 中可以直接 import JSON（会被编译进 bundle）
-import competitionsData from '../data/competitions.json';
-
+const CACHE_KEY = 'backend_competitions_cache_v1';
 let cached: Competition[] | null = null;
 
 /**
- * 获取竞赛数据，优先级：
- * 1. 本地静态 JSON（秒开）
- * 2. Supabase 在线数据（慢，但有更新）
- * 
- * 本地 JSON 加载到后，后台静默尝试更新 Supabase 数据。
+ * 页面首次加载优先使用上次从后端成功同步的浏览器缓存。
+ * 没有缓存时才访问 Render/Supabase，避免每次刷新都等待网络。
  */
 export async function fetchCompetitions(): Promise<Competition[]> {
-  // 已经缓存过 → 直接返回
   if (cached) return cached;
 
-  // 1. 尝试从本地 JSON 加载（同步，毫秒级）
-  try {
-    if (Array.isArray(competitionsData) && competitionsData.length > 0) {
-      const local = (competitionsData as SupabaseCompetitionRow[]).map(mapRowToCompetition);
-      console.log('[DataLoader] 📦 本地 JSON 加载', local.length, '条');
-      cached = local;
-
-      // 后台静默更新 Supabase（不阻塞 UI）
-      fetchSupabaseInBackground();
-
-      return local;
-    }
-  } catch (e) {
-    console.warn('[DataLoader] 本地 JSON 加载失败:', e);
+  const stored = readStoredCache();
+  if (stored) {
+    cached = stored;
+    return stored;
   }
 
-  // 2. 降级到 Supabase
-  console.log('[DataLoader] ⏳ 降级到 Supabase...');
-  const supabaseData = await fetchCompetitionsFromSupabase();
-  if (supabaseData && supabaseData.length > 0) {
-    cached = supabaseData;
-    return supabaseData;
-  }
-
-  return [];
+  return refreshCompetitions();
 }
 
 /**
- * 后台静默更新 Supabase 数据
+ * 强制从 Render 后端重新读取 Supabase，并同步内存与浏览器缓存。
+ * 未来“更新竞赛库”按钮应在后端更新完成后调用此函数。
  */
-async function fetchSupabaseInBackground() {
-  try {
-    const fresh = await fetchCompetitionsFromSupabase();
-    if (fresh && fresh.length > 0) {
-      cached = fresh;
-      console.log('[DataLoader] 🔄 后台更新完成:', fresh.length, '条');
-    }
-  } catch {
-    // 静默失败，继续用本地数据
+export async function refreshCompetitions(): Promise<Competition[]> {
+  const pageSize = 500;
+  const first = await request<CompetitionPage>('/api/competitions?page=1&page_size=500');
+  const rows = [...first.items];
+  const pages = Math.ceil(first.total / pageSize);
+
+  for (let page = 2; page <= pages; page += 1) {
+    const result = await request<CompetitionPage>(
+      `/api/competitions?page=${page}&page_size=${pageSize}`,
+    );
+    rows.push(...result.items);
   }
+
+  cached = rows.map(mapRowToCompetition);
+  localStorage.setItem(
+    CACHE_KEY,
+    JSON.stringify({
+      items: cached,
+      updatedAt: new Date().toISOString(),
+    }),
+  );
+  return cached;
+}
+
+function readStoredCache(): Competition[] | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { items?: Competition[] };
+    return Array.isArray(parsed.items) ? parsed.items : null;
+  } catch {
+    localStorage.removeItem(CACHE_KEY);
+    return null;
+  }
+}
+
+interface CompetitionPage {
+  success: boolean;
+  items: SupabaseCompetitionRow[];
+  total: number;
+  page: number;
+  page_size: number;
+  source: 'supabase';
 }
