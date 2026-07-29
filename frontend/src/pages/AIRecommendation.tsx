@@ -53,7 +53,7 @@ export function AIRecommendation() {
     >
       {/* 页面标题 */}
       <div>
-         <Typography.Title level={2} style={{ marginTop: 2, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+        <Typography.Title level={2} style={{ marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
           <RobotOutlined style={{ color: colorPrimary }} />
           赛智通 AI竞赛智能体
         </Typography.Title>
@@ -63,7 +63,7 @@ export function AIRecommendation() {
       </div>
 
             {/* 主区域：左右两列等高 */}
-            <Row gutter={24} style={{ minHeight: 580 }}>
+            <Row gutter={24} style={{ minHeight: 480 }}>
         {/* 左侧：对话区 */}
         <Col xs={24} md={16}>
                     <div
@@ -145,11 +145,11 @@ export function AIRecommendation() {
             </div>
 
             {/* 输入区域 */}
-            <div style={{ padding: "16px 20px", borderTop: "1px solid rgba(15, 23, 42, 0.06)", background: "#fff" }}>
+            <div style={{ padding: "10px 20px 8px", borderTop: "1px solid rgba(15, 23, 42, 0.06)", background: "#fff" }}>
               <Input.TextArea
                 ref={inputRef}
                 value={input}
-                rows={2}
+                                rows={1}
                 placeholder="输入你的专业、兴趣和竞赛目标..."
                 onChange={e => setInput(e.target.value)}
                 onPressEnter={e => {
@@ -162,10 +162,10 @@ export function AIRecommendation() {
                   borderRadius: 12,
                   resize: "none",
                   fontSize: 14,
-                  padding: "10px 14px"
+                  padding: "8px 12px"
                 }}
               />
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
                 <Button
                   type="primary"
                   icon={<SendOutlined />}
