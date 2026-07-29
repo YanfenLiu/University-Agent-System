@@ -266,6 +266,18 @@ export function AIRecommendation() {
             </div>
           ))}
         </div>
+        {/* 数据说明：灰色小字，不影响主要内容 */}
+        <div
+          style={{
+            marginTop: 12,
+            fontSize: 12,
+            color: "rgba(0, 0, 0, 0.35)",
+            textAlign: "center",
+            lineHeight: 1.6,
+          }}
+        >
+          当前推荐结果基于已有竞赛数据库生成，部分赛事信息可能未实时同步，建议前往竞赛库获取最新数据。
+        </div>
       </Card>
       )}
     </Space>
