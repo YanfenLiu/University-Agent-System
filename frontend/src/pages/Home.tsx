@@ -1,4 +1,4 @@
-import { Button, Card, Col, Row, Space, Tag, Typography } from 'antd';
+import { Button, Card, Col, Row, Space, Tag, Typography, message } from 'antd';
 import { useState } from 'react';
 
 import {
@@ -13,6 +13,7 @@ import {
 import { CompetitionCard } from '../components/CompetitionCard';
 import { useNavigation } from '../contexts/NavigationContext';
 import { useCompetitionsData } from '../contexts/CompetitionsDataContext';
+import { useCompetitions } from '../contexts/CompetitionsContext';
 import { designTokens } from '../styles/tokens';
 
 
@@ -50,9 +51,10 @@ const WORKFLOW_NODES = [
 
 // 赛智通首页
 export function Home() {
-  const competitions = useCompetitionsData();
+    const competitions = useCompetitionsData();
   const hot = competitions.slice(0,3);
   const { navigateTo } = useNavigation();
+  const { addCompetition, isJoined } = useCompetitions();
     const [aiLoading, setAiLoading] = useState(false);
     const goAI = () => {
       setAiLoading(true);
@@ -227,7 +229,15 @@ export function Home() {
                 <Row gutter={[designTokens.spacing.lg, designTokens.spacing.md]}>
           {hot.map(item => (
             <Col xs={24} md={8} key={item.id}>
-              <CompetitionCard competition={item} showActions={false} />
+              <CompetitionCard
+                competition={item}
+                showActions={true}
+                joined={isJoined(item.id)}
+                onAdd={() => {
+                  addCompetition(item);
+                  message.success('✓ 已加入「' + item.name.slice(0, 16) + '…」');
+                }}
+              />
             </Col>
           ))}
         </Row>
