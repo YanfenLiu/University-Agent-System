@@ -103,7 +103,7 @@ export function Home() {
     <div className="fade-in">
 
       {/* ===== HERO SECTION ===== */}
-      <div style={{ position:'relative', overflow:'hidden', borderRadius: designTokens.borderRadius, background:'linear-gradient(135deg,#0c1833 0%,#132952 40%,#1a3a6b 100%)', padding:'72px 52px', ...SEC_GAP }}>
+      <div style={{ position:'relative', overflow:'hidden', borderRadius: designTokens.borderRadius, background:'linear-gradient(135deg,#0c1833 0%,#132952 40%,#1a3a6b 100%)', padding:'68px 52px', ...SEC_GAP }}>
         <div style={{ position:'absolute', inset:0, opacity:0.04, backgroundImage:'linear-gradient(rgba(255,255,255,0.3) 1px,transparent 1px), linear-gradient(90deg,rgba(255,255,255,0.3) 1px,transparent 1px)', backgroundSize:'48px 48px' }} />
         <div style={{ position:'absolute', top:-80, right:'40%', width:400, height:400, borderRadius:'50%', background:'radial-gradient(circle, rgba(22,119,255,0.18) 0%, transparent 70%)', animation:'glowPulse 4s ease-in-out infinite' }} />
         <div style={{ position:'absolute', bottom:-40, left:-40, width:200, height:200, borderRadius:'50%', background:'radial-gradient(circle, rgba(82,196,26,0.10) 0%, transparent 70%)' }} />
