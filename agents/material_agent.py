@@ -104,6 +104,60 @@ class MaterialAgent:
         (["医学", "护理", "药学", "公共卫生", "临床"], "医学健康"),
     ]
 
+    # ---- 大类 → 专属写作指导 ----
+    CATEGORY_WRITING_TIPS = {
+        "编程算法": (
+            "竞赛类型为编程/算法赛，生成材料时应注意："
+            "① 简历突出刷题量（LeetCode/Codeforces题数）、竞赛成绩（ICPC/CCPC奖牌）、OJ排名；"
+            "② 技能部分标注熟练程度（如'Python 300+题/LeetCode Hard 50题'）；"
+            "③ 报名表参赛语言栏明确填写C++/Java/Python等。"
+        ),
+        "数学建模": (
+            "竞赛类型为数学建模竞赛，生成材料时应注意："
+            "① 建模方案简述突出模型选择理由和求解效率（如'选用XXX模型，求解时间从2h缩短至15min'）；"
+            "② 团队分工按建模+编程+写作三角配置；"
+            "③ 摘要比正文重要——评审先看摘要决定是否继续读。"
+        ),
+        "英语外语": (
+            "竞赛类型为英语/外语类竞赛，生成材料时应注意："
+            "① 简历突出语言成绩（四六级/CET/雅思/托福分数）、英语相关奖项；"
+            "② 备赛计划分听说读写四项安排；"
+            "③ 报名理由中提及语言学习的持续性和应用场景。"
+        ),
+        "创新创业": (
+            "竞赛类型为创新创业竞赛，生成材料时应注意："
+            "① 商业计划书突出社会价值和实践过程（小挑评审各20分）；"
+            "② 执行摘要≤800字硬性要求；"
+            "③ 财务数据要自洽，假设要合理，不要虚高。"
+        ),
+        "人文社科": (
+            "竞赛类型为人文社科类竞赛，生成材料时应注意："
+            "① 作品简述突出创作思路和创新点，不要堆砌参考文献；"
+            "② 备赛计划侧重阅读积累和写作训练；"
+            "③ 个人陈述体现人文素养和思辨能力。"
+        ),
+        "知识技能": (
+            "竞赛类型为知识竞赛，生成材料时应注意："
+            "① 备赛计划侧重知识点梳理和模拟测试；"
+            "② 报名表简洁即可，不需要复杂项目描述。"
+        ),
+        "艺术设计": (
+            "竞赛类型为艺术设计类竞赛，生成材料时应注意："
+            "① 作品简述突出设计理念和创作过程，附设计草图描述；"
+            "② 简历强调设计工具熟练度和作品集链接。"
+        ),
+        "理工学科": (
+            "竞赛类型为理工学科竞赛，生成材料时应注意："
+            "① 方案简述突出技术路线和实验/测试数据；"
+            "② 备赛计划侧重理论复习和实操训练。"
+        ),
+        "医学健康": (
+            "竞赛类型为医学健康类竞赛，生成材料时应注意："
+            "① 备赛计划侧重理论知识+技能操作；"
+            "② 简历突出相关课程成绩和临床/实验经历。"
+        ),
+    }
+
     # ---- 大类 → 所需材料映射 ----
     CATEGORY_MATERIALS = {
         "创新创业": [
@@ -528,6 +582,49 @@ class MaterialAgent:
                 "metadata": self._make_metadata(),
             }
 
+        # ---- 全生成模式：一键生成竞赛所需全部材料 ----
+        if inner.get("material_type") == "_generate_all":
+            comp_name = (
+                inner.get("competition_info", {}).get("title", "")
+                or inner.get("competition_info", {}).get("competition_name", "")
+                or input_data.get("user_input", "")
+            )
+            suggestions = self.suggest_materials(comp_name)
+            all_results = []
+            for mt, name, note in suggestions.get("materials", []):
+                item_input = {**input_data,
+                    "input_data": {**inner, "material_type": mt}}
+                try:
+                    item_result = self.process(item_input)
+                    all_results.append({
+                        "material_type": mt,
+                        "material_name": name,
+                        "content": item_result.get("content", {}),
+                        "format_spec": item_result.get("format_spec", {}),
+                        "checklist": item_result.get("checklist", []),
+                        "suggestions": item_result.get("suggestions", []),
+                    })
+                except Exception:
+                    all_results.append({"material_type": mt, "material_name": name, "error": "生成失败"})
+
+            return {
+                "task_id": task_id,
+                "agent_name": "material_agent",
+                "status": "success",
+                "data": {
+                    "material_type": "_generate_all",
+                    "material_name": f"全套材料包（{len(all_results)}项）",
+                    "all_materials": all_results,
+                    "content": {"sections": []},
+                    "checklist": [],
+                    "suggestions": [],
+                },
+                "message": f"已生成 {len(all_results)} 项材料。",
+                "error": None,
+                "next_action": None,
+                "metadata": self._make_metadata(),
+            }
+
         # Step 1: 校验输入
         validation_error = self.validate_input(input_data)
         if validation_error:
@@ -761,7 +858,7 @@ class MaterialAgent:
                 "_message": f"material_type '{material_type}' 的 Prompt 模板未加载。",
             }
         prompt_template = self.prompt_templates[material_type]
-        system_prompt = self._build_system_prompt(material_type, style)
+        system_prompt = self._build_system_prompt(material_type, style, competition_info)
         user_prompt = self._build_user_prompt(
             prompt_template,
             project_info,
@@ -845,11 +942,25 @@ class MaterialAgent:
                                user_profile: dict) -> dict:
         """汇总缺失字段，全部可选，用户自主决定提供哪些。"""
         if "checklist" in material_type or material_type in (
-            "generic_budget",
-            "generic_team_description",
-            "generic_schedule",
-            "generic_personal_resume",
+            "generic_budget", "generic_team_description", "generic_schedule",
         ):
+            return {"need_input": False, "message": ""}
+
+        # 个人简历：检查 user_profile 而非 project_info
+        if material_type == "generic_personal_resume":
+            up = user_profile or {}
+            if not up.get("name", "") and not up.get("major", ""):
+                return {
+                    "need_input": True,
+                    "message": (
+                        "生成个人简历需要一些基本信息，全部可选：\n\n"
+                        "  1. 你的姓名\n"
+                        "  2. 专业和年级\n"
+                        "  3. 擅长的技能或工具\n"
+                        "  4. 参赛或项目经历\n\n"
+                        "不想提供的信息可以跳过，或直接说「生成」。"
+                    ),
+                }
             return {"need_input": False, "message": ""}
 
         missing = []
@@ -1009,13 +1120,15 @@ class MaterialAgent:
     # _build_system_prompt — 构建 System Prompt
     # ============================================================
 
-    def _build_system_prompt(self, material_type: str, style: str) -> str:
+    def _build_system_prompt(self, material_type: str, style: str,
+                              competition_info: dict = None) -> str:
         """
-        拼接全局 System Prompt + 模板专属 System Prompt
+        拼接全局 System Prompt + 模板专属 System Prompt + 竞赛专属写作指导
 
         Args:
             material_type: 材料类型标识
             style: 语言风格（formal / casual）
+            competition_info: 竞赛信息，用于注入竞赛专属写作指导
 
         Returns:
             完整的 System Prompt 字符串
@@ -1028,6 +1141,21 @@ class MaterialAgent:
         template = self.prompt_templates.get(material_type, {})
         template_system = template.get("system", "")
 
+        # 竞赛专属写作指导
+        category_guidance = ""
+        if competition_info:
+            comp_name = (
+                competition_info.get("competition_name", "")
+                or competition_info.get("title", "")
+            )
+            if comp_name:
+                for keywords, category in self.COMPETITION_CATEGORIES:
+                    if any(kw in comp_name for kw in keywords):
+                        tips = self.CATEGORY_WRITING_TIPS.get(category, "")
+                        if tips:
+                            category_guidance = f"\n\n## 竞赛专属写作指导\n{tips}"
+                        break
+
         # 风格约束（如正式风格需要额外强调）
         style_guidance = ""
         if style == "formal":
@@ -1039,7 +1167,7 @@ class MaterialAgent:
                 "- 使用第三人称或正式的第一人称，避免随意语气"
             )
 
-        return global_system + "\n\n" + template_system + style_guidance
+        return global_system + "\n\n" + template_system + category_guidance + style_guidance
 
     # ============================================================
     # _build_user_prompt — 构建 User Prompt
