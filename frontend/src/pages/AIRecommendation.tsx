@@ -121,13 +121,13 @@ export function AIRecommendation() {
             {/* 消息区域 */}
             <div
               ref={messagesContainerRef}
-                            style={{
-                              flex: 1,
-                              overflowY: "auto",
-                              padding: "20px",
-                              background: "#f8faff"
-                              maxHeight: "calc(100vh - 340px)"
-                            }}
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                padding: "20px",
+                background: "#f8faff",
+                maxHeight: "calc(100vh - 340px)"
+              }}
             >
               <ChatSuggestions
                 visible={showSuggestions}
@@ -149,7 +149,7 @@ export function AIRecommendation() {
               <Input.TextArea
                 ref={inputRef}
                 value={input}
-                                rows={1}
+                rows={1}
                 placeholder="输入你的专业、兴趣和竞赛目标..."
                 onChange={e => setInput(e.target.value)}
                 onPressEnter={e => {
@@ -205,7 +205,7 @@ export function AIRecommendation() {
         </Col>
       </Row>
 
-            {/* 推荐竞赛方案区域 - 有推荐时才显示 */}
+      {/* 推荐竞赛方案区域 - 有推荐时才显示 */}
       {recommendedCompetitions.length > 0 && (
       <Card
         title={
@@ -260,12 +260,12 @@ export function AIRecommendation() {
                 joined={isJoined(item.id)}
                 onAdd={() => {
                   addCompetition(item);
-                  message.success('已加入我的竞赛');
+                  message.success('\u5DF2\u52A0\u5165\u6211\u7684\u7ADE\u8D5B');
                 }}
               />
             </div>
           ))}
-                </div>
+        </div>
       </Card>
       )}
     </Space>
