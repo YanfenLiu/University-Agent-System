@@ -3,37 +3,10 @@ import { sendMessage } from "../services";
 import type { Competition, DimensionalScores } from "../../../services/competitions";
 import type { Message, AgentStep, UserProfile, AgentResponse } from "../types";
 
-const CHAT_STORAGE_KEY = "saizhitong-main-agent-chat-v1";
 const WELCOME_MESSAGE =
   "你好！我是 **赛智通 AI 竞赛智能体** 🤖\n\n" +
   "我可以帮你分析专业背景、推荐适合的竞赛、规划参赛路线。\n\n" +
   "请先告诉我你的专业和年级。";
-
-type StoredChat = {
-  messages: Message[];
-  stateSnapshot: Record<string, unknown>;
-};
-
-function loadStoredChat(): StoredChat {
-  try {
-    const raw = window.localStorage.getItem(CHAT_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<StoredChat>;
-      if (Array.isArray(parsed.messages) && parsed.stateSnapshot) {
-        return {
-          messages: parsed.messages,
-          stateSnapshot: parsed.stateSnapshot,
-        };
-      }
-    }
-  } catch {
-    // Corrupt browser state should never prevent the chat page from loading.
-  }
-  return {
-    messages: [{ role: "assistant", content: WELCOME_MESSAGE }],
-    stateSnapshot: {},
-  };
-}
 
 function mapRecommendations(rawRows: unknown): Competition[] {
   const rows = Array.isArray(rawRows) ? rawRows : [];
@@ -87,19 +60,15 @@ function mapRecommendations(rawRows: unknown): Competition[] {
 }
 
 export function useAgentChat() {
-  const initialChat = useRef<StoredChat | null>(null);
-  if (initialChat.current === null) initialChat.current = loadStoredChat();
   const inputRef = useRef<any>(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(true);
 
-  const [messages, setMessages] = useState<Message[]>(
-    initialChat.current.messages,
-  );
-  const [stateSnapshot, setStateSnapshot] = useState<Record<string, unknown>>(
-    initialChat.current.stateSnapshot,
-  );
+  const [messages, setMessages] = useState<Message[]>([
+    { role: "assistant", content: WELCOME_MESSAGE },
+  ]);
+  const [stateSnapshot, setStateSnapshot] = useState<Record<string, unknown>>({});
 
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([
     { label: "等待用户输入", status: "wait", detail: "请描述你的背景和需求" },
@@ -132,13 +101,6 @@ export function useAgentChat() {
     }
   }, [messages, shouldScroll]);
 
-  useEffect(() => {
-    window.localStorage.setItem(
-      CHAT_STORAGE_KEY,
-      JSON.stringify({ messages, stateSnapshot }),
-    );
-  }, [messages, stateSnapshot]);
-
   const updateAgentStep = (
     index: number,
     status: "wait" | "running" | "done",
@@ -168,7 +130,6 @@ export function useAgentChat() {
       const result: AgentResponse = await sendMessage(text, stateSnapshot);
       const shouldReset = Boolean(result.metadata?.reset);
       if (shouldReset) {
-        window.localStorage.removeItem(CHAT_STORAGE_KEY);
         setStateSnapshot({});
         setMessages([{ role: "assistant", content: WELCOME_MESSAGE }]);
         setShowSuggestions(true);
