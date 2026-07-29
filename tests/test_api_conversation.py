@@ -128,7 +128,7 @@ def test_internal_orchestration_message_is_not_exposed():
     assert "补充" in text
 
 
-def test_profile_collection_is_one_topic_per_turn(monkeypatch):
+def test_profile_collection_groups_preferences_and_fills_remaining(monkeypatch):
     agent = _agent()
     turns = iter(
         [
@@ -165,7 +165,10 @@ def test_profile_collection_is_one_topic_per_turn(monkeypatch):
     monkeypatch.setattr(agent, "run", fake_run)
 
     first = agent.run_conversation_turn("我是计算机专业大二", {})
-    assert "竞赛方向" in first["response"]["text"]
+    assert "方向" in first["response"]["text"]
+    assert "技能" in first["response"]["text"]
+    assert "级" in first["response"]["text"]
+    assert first["state_snapshot"]["pending_action"] == "collect_preferences"
 
     second = agent.run_conversation_turn("方向都可以", first["state_snapshot"])
     assert "技能" in second["response"]["text"]
@@ -183,6 +186,8 @@ def test_profile_collection_is_one_topic_per_turn(monkeypatch):
     assert fourth["response"]["type"] == "result"
     assert captured["task_type"] == "recommendation"
     assert captured["task_type"] != "full_process"
+    assert captured["input_data"]["sources"] == ["saikr"]
+    assert captured["input_data"]["max_results"] == 10
     assert (
         fourth["state_snapshot"]["last_recommendations"][0]["title"]
         == "人工智能挑战赛"
@@ -198,18 +203,18 @@ def test_matching_semantic_question_is_used(monkeypatch):
             intent="recommendation",
             major="人工智能",
             grade="大二",
-            reply_target="collect_competition_type",
+            reply_target="collect_preferences",
             reply_text=(
-                "人工智能专业可以选择的赛道很多。"
-                "你更想尝试计算机视觉、智能机器人，还是其他方向？"
+                "AI 相关竞赛选择很多。你可以一起说说想尝试的方向、"
+                "会用的工具或项目经历，以及对竞赛级别有没有偏好。"
             ),
         ),
     )
 
     result = agent.run_conversation_turn("我是人工智能专业大二学生", {})
 
-    assert "计算机视觉" in result["response"]["text"]
-    assert result["state_snapshot"]["pending_action"] == "collect_competition_type"
+    assert "项目经历" in result["response"]["text"]
+    assert result["state_snapshot"]["pending_action"] == "collect_preferences"
 
 
 def test_mismatched_semantic_question_falls_back_to_safe_template(monkeypatch):
@@ -228,8 +233,35 @@ def test_mismatched_semantic_question_falls_back_to_safe_template(monkeypatch):
 
     result = agent.run_conversation_turn("我是人工智能专业大二学生", {})
 
-    assert "竞赛方向" in result["response"]["text"]
+    assert "方向" in result["response"]["text"]
     assert "推荐好了" not in result["response"]["text"]
+
+
+def test_short_direction_answer_does_not_overwrite_major():
+    agent = _agent()
+    state = agent.new_conversation_state()
+    state.update(
+        {
+            "major": "计算机科学与技术",
+            "grade": "大二",
+            "pending_action": "collect_preferences",
+        }
+    )
+
+    updated = agent._apply_conversation_understanding(
+        state,
+        "人工智能",
+        _understanding(
+            intent="recommendation",
+            dialogue_action="profile_change",
+            major="人工智能",
+            corrected_fields=["major"],
+        ),
+    )
+
+    assert updated["major"] == "计算机科学与技术"
+    assert updated["competition_type"] == "人工智能"
+    assert updated["competition_type_status"] == "provided"
 
 
 def test_material_flow_selects_project_then_type(monkeypatch):
