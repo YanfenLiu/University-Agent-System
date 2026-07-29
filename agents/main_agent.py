@@ -182,6 +182,8 @@ class MainAgent:
             "team_preference": "",
             "project_name": "",
             "material_type": "",
+            "material_details": "",
+            "material_generation_confirmed": False,
             "selected_recommendation": {},
             "recommendation_options": {},
             "last_recommendations": [],
@@ -843,6 +845,16 @@ class MainAgent:
         state: dict[str, Any],
         understanding: dict[str, Any],
     ) -> dict[str, Any]:
+        if (
+            state.get("pending_action") == "collect_material_details"
+            and state.get("material_type") in self.valid_material_types
+        ):
+            compact = re.sub(r"[\s，,。.!！?？]", "", message)
+            if compact in {"生成", "直接生成", "先生成", "跳过", "暂不提供"}:
+                state["material_generation_confirmed"] = True
+            else:
+                state["material_details"] = message
+
         recommendations = state.get("last_recommendations", [])
         if not recommendations and not state.get("project_name"):
             state["pending_action"] = "provide_material_project"
@@ -908,6 +920,10 @@ class MainAgent:
                 task_type="material",
             )
         )
+        if str(result.get("status") or "") == "need_input":
+            state["pending_action"] = "collect_material_details"
+        else:
+            state["pending_action"] = ""
         return self._conversation_agent_response(state, result)
 
     def _resolve_conversation_selection(
@@ -1012,12 +1028,13 @@ class MainAgent:
                     **selected,
                     "project_name": name,
                     "title": name,
-                    "background": (
-                        selected.get("summary")
-                        or selected.get("reason")
-                        or "根据上一轮推荐结果生成。"
-                    ),
                 }
+                selected_background = (
+                    selected.get("summary")
+                    or selected.get("reason")
+                )
+                if selected_background:
+                    payload["project_info"]["background"] = selected_background
                 payload["competition_info"] = {
                     **selected,
                     "competition_name": name,
@@ -1026,8 +1043,23 @@ class MainAgent:
                 payload["project_info"] = {
                     "project_name": state["project_name"],
                     "title": state["project_name"],
-                    "background": "根据对话中提供的项目信息生成。",
                 }
+                details = str(state.get("material_details") or "").strip()
+                if details:
+                    payload["project_info"].update({
+                        "summary": details,
+                        "background": details,
+                    })
+                elif state.get("material_generation_confirmed"):
+                    payload["project_info"]["background"] = (
+                        "用户明确要求先生成可编辑草稿；未知事实必须标记为“待补充”，不得编造。"
+                    )
+                    payload["requirements"] = {
+                        "missing_information_policy": (
+                            "未知的项目、团队、数据和指导教师信息必须使用“待补充”占位符，"
+                            "不得虚构姓名、数据、机构、论文或成果。"
+                        )
+                    }
 
         return {
             "task_id": f"web_chat_{uuid4().hex[:8]}",
@@ -2236,6 +2268,15 @@ If no agent is needed, selected_agents must be empty.
                     str(error.get("suggestion") or ""),
                 ])
         issue_text = " ".join(issue_texts).lower()
+
+        for result in agent_results:
+            if (
+                result.get("agent_name") == "material_agent"
+                and result.get("status") == "need_input"
+            ):
+                message = str(result.get("message") or "").strip()
+                if message:
+                    return message
 
         if "row-level security" in issue_text or "42501" in issue_text:
             return (

@@ -330,6 +330,82 @@ def test_material_flow_selects_project_then_type(monkeypatch):
     assert captured["input_data"]["project_info"]["title"] == "数学建模竞赛"
 
 
+def test_direct_material_does_not_invent_project_background():
+    agent = _agent()
+    state = agent.new_conversation_state()
+    state.update({
+        "project_name": "麟创杯数学建模竞赛",
+        "material_type": "generic_project_report",
+    })
+
+    payload = agent._build_conversation_agent_input(
+        state,
+        "项目计划书",
+        task_type="material",
+    )
+
+    project_info = payload["input_data"]["project_info"]
+    assert project_info["project_name"] == "麟创杯数学建模竞赛"
+    assert "background" not in project_info
+
+
+def test_material_need_input_is_shown_and_next_details_are_forwarded(monkeypatch):
+    agent = _agent()
+    state = agent.new_conversation_state()
+    state.update({
+        "intent": "material",
+        "project_name": "麟创杯数学建模竞赛",
+        "material_type": "generic_project_report",
+    })
+    monkeypatch.setattr(
+        agent,
+        "understand_conversation_turn",
+        lambda *_: _understanding(
+            intent="material",
+            input_role="followup",
+            dialogue_action="generate_material",
+            material_type="generic_project_report",
+        ),
+    )
+    calls = []
+
+    def fake_run(payload):
+        calls.append(payload)
+        if len(calls) == 1:
+            return {
+                "status": "need_input",
+                "message": "MainAgent completed orchestration.",
+                "data": {
+                    "final_answer": "请补充项目简介、技术方案和创新点。",
+                    "agent_results": [{
+                        "agent_name": "material_agent",
+                        "status": "need_input",
+                        "message": "请补充项目简介、技术方案和创新点。",
+                        "data": {},
+                    }],
+                },
+            }
+        return {
+            "status": "success",
+            "message": "MainAgent completed orchestration.",
+            "data": {"final_answer": "项目计划书已生成。", "agent_results": []},
+        }
+
+    monkeypatch.setattr(agent, "run", fake_run)
+
+    first = agent.run_conversation_turn("项目计划书", state)
+    assert first["response"]["type"] == "need_input"
+    assert "项目简介" in first["response"]["text"]
+    assert first["state_snapshot"]["pending_action"] == "collect_material_details"
+
+    details = "项目用于优化校园交通，采用时空预测模型，创新点是多目标动态调度。"
+    second = agent.run_conversation_turn(details, first["state_snapshot"])
+    assert second["response"]["text"] == "项目计划书已生成。"
+    project_info = calls[1]["input_data"]["project_info"]
+    assert project_info["summary"] == details
+    assert project_info["background"] == details
+
+
 def test_profile_change_invalidates_old_recommendations():
     agent = _agent()
     state = agent.new_conversation_state()
