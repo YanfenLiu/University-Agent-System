@@ -122,12 +122,11 @@ export function AIRecommendation() {
             <div
               ref={messagesContainerRef}
                             style={{
-                flex: 1,
-                overflowY: "auto",
-                maxHeight: 420,
-                padding: "20px",
-                background: "#f8faff"
-              }}
+                              flex: 1,
+                              overflowY: "auto",
+                              padding: "20px",
+                              background: "#f8faff"
+                            }}
             >
               <ChatSuggestions
                 visible={showSuggestions}
