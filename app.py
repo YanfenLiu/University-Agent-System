@@ -1355,7 +1355,7 @@ def _update_chat_state(
         "幻灯片": "generic_ppt", "演示文稿": "generic_ppt", "答辩PPT": "generic_ppt",
         # 清单
         "材料清单": "challenge_cup_grand_checklist", "清单": "challenge_cup_grand_checklist",
-        "准备清单": "challenge_cup_grand_checklist", "需要什么材料": "challenge_cup_grand_checklist",
+        "准备清单": "challenge_cup_grand_checklist",
         # 学术论文
         "论文": "challenge_cup_grand_paper_natural", "学术论文": "challenge_cup_grand_paper_natural",
         "发表论文": "challenge_cup_grand_paper_natural",
@@ -1378,6 +1378,10 @@ def _update_chat_state(
         "团队分工": "generic_team_description", "分工": "generic_team_description",
         "谁做什么": "generic_team_description", "怎么分工": "generic_team_description",
         "人员安排": "generic_team_description", "角色分配": "generic_team_description",
+        # 备赛/准备
+        # 全生成
+        "全生成": "_generate_all", "一键生成": "_generate_all",
+        "全部生成": "_generate_all", "所有材料": "_generate_all",
         # 备赛/准备
         "备战计划": "generic_prep_plan", "备赛": "generic_prep_plan",
         "学习计划": "generic_prep_plan", "复习计划": "generic_prep_plan",
@@ -1746,8 +1750,8 @@ def _next_chat_question(state: dict[str, Any]) -> str | None:
                                     lines.append(line)
                                 lines.append("\n回复序号或名称即可生成，也可以直接说「生成简历」等。")
                                 return "\n".join(lines)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[suggest_materials] 失败: {e}")
             return "目标竞赛确定了。接下来想准备哪种材料？报名表、报名简历、计划书、PPT 或材料清单都可以。"
     if state["intent"] == "extract" and not state.get("notification_text"):
         return "好的，把竞赛通知全文粘贴过来就行，我会帮你整理关键信息和报名要求。"
