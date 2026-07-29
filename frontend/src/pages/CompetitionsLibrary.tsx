@@ -1,12 +1,10 @@
-import { Col, Input, Row, Tag, Typography, Spin, Alert, Result, message, useState } from 'antd';
-import { useMemo } from 'react';
-
+import { Col, Input, Row, Tag, Typography, Spin, Alert, Result, message } from 'antd';
+import { useMemo, useState } from 'react';
 import { CompetitionCard } from '../components/CompetitionCard';
-import { RefreshButton } from '../components/RefreshButton';
+import { RefreshButton } from '../components/RefreshButton';          // ★ NEW
 import { useCompetitionsData, useCompetitionsLoading, useCompetitionsError } from '../contexts/CompetitionsDataContext';
 import { useCompetitions } from '../contexts/CompetitionsContext';
 import { designTokens } from '../styles/tokens';
-
 import { SearchOutlined, TrophyOutlined } from '@ant-design/icons';
 
 const { success } = message;
@@ -18,13 +16,11 @@ export function CompetitionsLibrary() {
   const error = useCompetitionsError();
   const [searchText, setSearchText] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);               // ★ NEW
   const { addCompetition, isJoined } = useCompetitions();
 
-  // 刷新处理函数（当前只模拟，不调后端）
+  // ★ NEW — 刷新函数（当前只模拟 loading，不调接口）
   const handleRefresh = async () => {
-    // === 当前阶段：仅展示 UI 效果 ===
-    // 未来接入后端时替换为真实 API 请求
     await new Promise((resolve) => setTimeout(resolve, 1500));
   };
 
@@ -96,27 +92,18 @@ export function CompetitionsLibrary() {
       >
         <Typography.Title
           level={3}
-          style={{
-            margin: 0,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-          }}
+          style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}
         >
           <TrophyOutlined style={{ color: designTokens.colorPrimary }} />
           竞赛库
-          <RefreshButton
+          <RefreshButton                              {/* ★ NEW */}
             onRefresh={handleRefresh}
             loading={refreshing}
             style={{ marginLeft: 'auto' }}
           />
         </Typography.Title>
         <Typography.Text type="secondary" style={{ fontSize: 14 }}>
-          共收录{' '}
-          <strong style={{ color: designTokens.colorPrimary }}>
-            {competitions.length}
-          </strong>{' '}
-          个竞赛资源
+          共收录 <strong style={{ color: designTokens.colorPrimary }}>{competitions.length}</strong> 个竞赛资源
         </Typography.Text>
       </div>
 
@@ -131,8 +118,8 @@ export function CompetitionsLibrary() {
           borderRadius: 10,
           height: 44,
           marginBottom: designTokens.spacing.md,
-          border: '1px solid rgba(22,119,255,0.12)',
-          boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
+          border:'1px solid rgba(22,119,255,0.12)',
+          boxShadow:'0 2px 6px rgba(0,0,0,0.02)',
         }}
       />
 
@@ -151,16 +138,9 @@ export function CompetitionsLibrary() {
             padding: '4px 14px',
             fontSize: 13,
             cursor: 'pointer',
-            border:
-              selectedTag === null
-                ? '1px solid ' + designTokens.colorPrimary
-                : '1px solid #d9d9d9',
-            color:
-              selectedTag === null ? designTokens.colorPrimary : '#666',
-            background:
-              selectedTag === null
-                ? designTokens.colorPrimary + '12'
-                : '#fff',
+            border: selectedTag === null ? '1px solid ' + designTokens.colorPrimary : '1px solid #d9d9d9',
+            color: selectedTag === null ? designTokens.colorPrimary : '#666',
+            background: selectedTag === null ? designTokens.colorPrimary + '12' : '#fff',
             fontWeight: selectedTag === null ? 600 : 400,
           }}
           onClick={() => setSelectedTag(null)}
@@ -175,20 +155,12 @@ export function CompetitionsLibrary() {
               padding: '4px 14px',
               fontSize: 13,
               cursor: 'pointer',
-              border:
-                selectedTag === tag
-                  ? '1px solid ' + designTokens.colorPrimary
-                  : '1px solid #d9d9d9',
+              border: selectedTag === tag ? '1px solid ' + designTokens.colorPrimary : '1px solid #d9d9d9',
               color: selectedTag === tag ? designTokens.colorPrimary : '#666',
-              background:
-                selectedTag === tag
-                  ? designTokens.colorPrimary + '12'
-                  : '#fff',
+              background: selectedTag === tag ? designTokens.colorPrimary + '12' : '#fff',
               fontWeight: selectedTag === tag ? 600 : 400,
             }}
-            onClick={() =>
-              setSelectedTag(tag === selectedTag ? null : tag)
-            }
+            onClick={() => setSelectedTag(tag === selectedTag ? null : tag)}
           >
             {tag} ({count})
           </Tag>
@@ -221,18 +193,9 @@ export function CompetitionsLibrary() {
             color: '#999',
           }}
         >
-          <TrophyOutlined
-            style={{
-              fontSize: 48,
-              display: 'block',
-              marginBottom: 12,
-              opacity: 0.3,
-            }}
-          />
+          <TrophyOutlined style={{ fontSize: 48, display: 'block', marginBottom: 12, opacity: 0.3 }} />
           <Typography.Text type="secondary" style={{ fontSize: 15 }}>
-            {searchText || selectedTag
-              ? '没有匹配的竞赛，试试其他关键词？'
-              : '暂无竞赛数据'}
+            {searchText || selectedTag ? '没有匹配的竞赛，试试其他关键词？' : '暂无竞赛数据'}
           </Typography.Text>
         </div>
       )}
