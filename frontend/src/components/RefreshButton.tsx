@@ -45,14 +45,14 @@ export function RefreshButton({
     <Tooltip title="刷新竞赛数据">
       <Button
         type="default"
-        size="middle"
+        size="large"
         icon={<ReloadOutlined spin={isLoading} />}
         loading={isLoading}
         disabled={disabled || isLoading}
         onClick={handleClick}
         style={{
           borderRadius: designTokens.borderRadiusSmall,
-          fontSize: 13,
+          fontSize: 15,
           display: 'inline-flex',
           alignItems: 'center',
           gap: 4,
