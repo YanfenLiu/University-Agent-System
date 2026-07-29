@@ -21,6 +21,7 @@ export async function sendMessage(
       {
         method: "POST",
         body,
+        timeout: 300000,
       },
     );
 

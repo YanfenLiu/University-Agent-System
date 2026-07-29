@@ -412,7 +412,7 @@ class MainAgent:
             "acknowledgement": "不超过45字，自然承接用户的话，不提问",
             "reply_target": (
                 "collect_major|collect_grade|collect_competition_type|collect_skills|"
-                "collect_competition_level|provide_material_project|empty"
+                "collect_competition_level|collect_preferences|provide_material_project|empty"
             ),
             "reply_text": (
                 "结合用户本轮表达自然承接，并只询问reply_target对应的一项信息；"
@@ -460,13 +460,23 @@ class MainAgent:
                         "如果提到了推荐序号或名称，把它写入selected_recommendation。"
                         "材料类型必须归一化为material_type给定枚举；没有明确类型就输出empty，不要猜。"
                         "如果已有pending_action，优先把本轮短回答理解为对该追问的回答。"
+                        "尤其当pending_action是collect_competition_type或collect_preferences时，"
+                        "用户只回答‘人工智能’‘数学建模’‘算法’等方向名称，必须写入competition_type，"
+                        "绝不能当成新专业或profile_change；只有用户明确说‘我是X专业’‘专业改成X’"
+                        "‘其实学的是X’时才修改major。pending_action是collect_preferences时，"
+                        "应一次理解用户对方向、技能和级别中任意一项或多项的回答；如果用户概括说"
+                        "‘都可以’‘都不限’‘没有要求’，可以把仍未确定的方向、技能和级别都标为"
+                        "no_preference，避免机械地逐项重复追问。"
                         "用户明确要求清空全部记忆、重置会话或重新开始时，dialogue_action用reset_all。"
                         "acknowledgement要像自然对话，优先使用‘明白了’‘了解’‘这样我就清楚了’，"
                         "不要使用‘已记录’‘字段’‘状态’等系统日志口吻。"
                         "同时根据已有状态和本轮新增信息，预测系统下一步唯一缺少的信息："
                         "依次检查专业、年级、竞赛方向、技能、竞赛级别；材料任务没有具体竞赛或项目时"
-                        "使用provide_material_project。把对应动作写入reply_target，并在reply_text中"
-                        "用自然、贴合上下文的语言承接用户后只追问这一项。"
+                        "使用provide_material_project。方向、技能、级别中同时缺少两项以上时，"
+                        "reply_target使用collect_preferences并把它们自然地合并成一个简短问题；"
+                        "不要像问卷一样逐字段确认。把对应动作写入reply_target，并在reply_text中"
+                        "用自然、口语化、贴合上下文的语言承接，使用‘你’而不是‘您’，"
+                        "不要说‘已更新你的专业/状态/字段’，也不要机械复述用户原话。"
                         "reply_text不能声称已经完成推荐、搜索或材料生成，不能编造竞赛名称、用户经历、"
                         "链接或事实；不需要追问时reply_target和reply_text均为空。只输出JSON。"
                     ),
@@ -538,6 +548,41 @@ class MainAgent:
         state = self._normalize_conversation_state(state_snapshot)
         state["turns"] = [*state["turns"], message][-12:]
         state["last_acknowledgement"] = ""
+        understanding = dict(understanding)
+
+        # A short answer belongs to the question MainAgent just asked.  Guard
+        # against the model treating a competition direction such as
+        # "人工智能" as an academic-major correction.
+        pending_before = str(state.get("pending_action") or "")
+        proposed_major = str(understanding.get("major") or "").strip()
+        explicit_identity_change = any(
+            marker in message
+            for marker in (
+                "专业",
+                "我是",
+                "我学",
+                "学的是",
+                "改成",
+                "其实是",
+                "不是",
+            )
+        )
+        if (
+            pending_before in {"collect_competition_type", "collect_preferences"}
+            and proposed_major
+            and not explicit_identity_change
+        ):
+            if not str(understanding.get("competition_type") or "").strip():
+                understanding["competition_type"] = proposed_major
+                understanding["competition_type_status"] = "provided"
+            understanding["major"] = ""
+            understanding["corrected_fields"] = [
+                item
+                for item in understanding.get("corrected_fields", [])
+                if str(item).strip() != "major"
+            ]
+            if understanding.get("dialogue_action") == "profile_change":
+                understanding["dialogue_action"] = "continue"
 
         for key in ("input_role", "dialogue_action", "response_mode"):
             value = str(understanding.get(key) or "").strip()
@@ -730,6 +775,27 @@ class MainAgent:
         if not state.get("grade"):
             state["pending_action"] = "collect_grade"
             return "你目前读大几，或者是在研究生阶段？"
+        missing_preferences = [
+            key
+            for key, status_key in (
+                ("direction", "competition_type_status"),
+                ("skills", "skills_status"),
+                ("level", "competition_level_status"),
+            )
+            if state.get(status_key) == "unknown"
+        ]
+        if len(missing_preferences) >= 2:
+            state["pending_action"] = "collect_preferences"
+            prompts = {
+                "direction": "想尝试的方向（例如 AI、算法、建模或创新创业）",
+                "skills": "目前会的技能、工具或做过的项目",
+                "level": "对校级、省级、国家级或国际级有没有偏好",
+            }
+            details = "；".join(prompts[key] for key in missing_preferences)
+            return (
+                f"再简单说说这几项就可以开始推荐了：{details}。"
+                "没有特别要求的部分直接说不限就行，不需要逐条回答。"
+            )
         if state.get("competition_type_status") == "unknown":
             state["pending_action"] = "collect_competition_type"
             return (
@@ -905,6 +971,30 @@ class MainAgent:
                 "competition_scope": state["competition_scope"],
             },
         }
+        if task_type == "recommendation":
+            # A synchronous web request must not wait for every registered
+            # crawler to fill a missing source.  InfoCollectAgent still uses
+            # the shared Supabase cache/semantic search, while the primary
+            # source keeps the request bounded.  Other collection entry points
+            # retain their existing all-source behavior.
+            info_config = (
+                self.config.get("info_collect", {})
+                if isinstance(self.config, dict)
+                else {}
+            )
+            configured_sources = info_config.get(
+                "conversation_sources",
+                ["saikr"],
+            )
+            sources = [
+                str(item).strip()
+                for item in configured_sources
+                if str(item).strip()
+            ] if isinstance(configured_sources, list) else []
+            payload["sources"] = sources or ["saikr"]
+            payload["max_results"] = int(
+                info_config.get("max_results", 10)
+            )
         if state["competition_type"]:
             payload["keywords"] = [state["competition_type"]]
         if task_type == "recommendation" and state["recommendation_options"]:
