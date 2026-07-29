@@ -1813,7 +1813,6 @@ def _chat_standard_input(state: dict[str, Any], message: str) -> dict:
     if state.get("project_name"):
         payload["project_info"] = {
             "project_name": state["project_name"],
-            "background": "根据对话收集的信息生成申报材料初稿。",
         }
 
     last_result = state.get("last_result", {})
