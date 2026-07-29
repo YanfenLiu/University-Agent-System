@@ -10,6 +10,7 @@
     "antd": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "react-markdown": "^10.1.0",
     "typescript": "latest",
     "vite": "latest"
   },

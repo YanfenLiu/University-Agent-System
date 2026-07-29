@@ -6,9 +6,11 @@ import re
 import sys
 import urllib.error
 import urllib.request
+from copy import deepcopy
 from importlib import import_module
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -39,6 +41,24 @@ class MainAgent:
         "info_extract": ("agents.info_extract_agent", "InfoExtractAgent"),
         "recommendation": ("agents.recommendation_agent", "RecommendationAgent"),
         "material": ("agents.material_agent", "MaterialAgent"),
+    }
+
+    reset_commands = {
+        "重置所有",
+        "重新开始",
+        "清空会话",
+        "清空对话",
+        "忘记之前的信息",
+    }
+
+    valid_material_types = {
+        "generic_personal_resume",
+        "generic_application_form",
+        "generic_project_report",
+        "generic_ppt",
+        "generic_team_description",
+        "generic_budget",
+        "generic_schedule",
     }
 
     def __init__(self, config: dict[str, Any] | None = None):
@@ -130,6 +150,178 @@ class MainAgent:
             },
         )
 
+    def new_conversation_state(self) -> dict[str, Any]:
+        """Return the browser-safe dialogue state owned by MainAgent."""
+        return {
+            "version": 1,
+            "intent": "",
+            "input_role": "",
+            "dialogue_action": "",
+            "response_mode": "",
+            "major": "",
+            "grade": "",
+            "interests": [],
+            "skills": [],
+            "skills_status": "unknown",
+            "skill_gaps": [],
+            "competition_type": "",
+            "competition_type_status": "unknown",
+            "competition_scope": "unknown",
+            "excluded_competition_types": [],
+            "competition_level": "",
+            "competition_level_status": "unknown",
+            "preferred_levels": [],
+            "acceptable_levels": [],
+            "excluded_levels": [],
+            "development_goals": [],
+            "available_time_per_week": None,
+            "team_preference": "",
+            "project_name": "",
+            "material_type": "",
+            "selected_recommendation": {},
+            "recommendation_options": {},
+            "last_recommendations": [],
+            "last_result": {},
+            "pending_action": "",
+            "last_acknowledgement": "",
+            "conversation_summary": "",
+            "turns": [],
+        }
+
+    def run_conversation_turn(
+        self,
+        user_input: str,
+        state_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Understand one web turn, update state, and dispatch only when ready.
+
+        This is the single conversational entry point for web clients.  The
+        browser stores the returned state transparently; all business decisions
+        remain inside MainAgent.
+        """
+        text = str(user_input or "").strip()
+        state = self._normalize_conversation_state(state_snapshot)
+
+        if self._is_reset_command(text):
+            return self._conversation_response(
+                text=(
+                    "已经为你重置全部信息，我们重新开始吧。\n\n"
+                    "请先告诉我你的专业和年级。"
+                ),
+                state=self.new_conversation_state(),
+                response_type="reset",
+                reset=True,
+            )
+        if not text:
+            return self._conversation_response(
+                text="请输入你想咨询的内容。",
+                state=state,
+                response_type="need_input",
+            )
+
+        understanding = self.understand_conversation_turn(text, state)
+        if not isinstance(understanding, dict):
+            return self._conversation_response(
+                text="当前AI理解服务暂时不可用，我已保留你的对话内容，请稍后重试。",
+                state=state,
+                response_type="error",
+                success=False,
+            )
+
+        state = self._apply_conversation_understanding(state, text, understanding)
+        action = str(state.get("dialogue_action") or "")
+
+        if action == "reset_all":
+            return self._conversation_response(
+                text=(
+                    "已经为你重置全部信息，我们重新开始吧。\n\n"
+                    "请先告诉我你的专业和年级。"
+                ),
+                state=self.new_conversation_state(),
+                response_type="reset",
+                reset=True,
+            )
+
+        if state.get("last_result") and action in {
+            "competition_detail",
+            "compare_recommendations",
+            "explain_recommendation_count",
+        }:
+            followup = self.handle_followup(text, state["last_result"], state)
+            if followup:
+                return self._conversation_response(
+                    text=followup.get("data", {}).get(
+                        "final_answer",
+                        followup.get("message", ""),
+                    ),
+                    state=state,
+                    response_type=followup.get("status", "success"),
+                )
+
+        if state.get("input_role") == "chat" or action == "chat":
+            control = self.handle_conversation_control(text, state)
+            if control:
+                return self._conversation_response(
+                    text=control.get("data", {}).get(
+                        "final_answer",
+                        control.get("message", ""),
+                    ),
+                    state=state,
+                )
+
+        intent = self._resolve_conversation_intent(state, understanding)
+        state["intent"] = intent
+
+        if intent == "material":
+            return self._run_material_conversation(text, state, understanding)
+
+        if intent in {"", "recommendation", "full_process", "collect"}:
+            state["intent"] = "recommendation"
+            question = self._next_recommendation_question(state)
+            if question:
+                fallback = self._with_acknowledgement(state, question)
+                return self._conversation_response(
+                    text=self._semantic_conversation_question(
+                        understanding,
+                        str(state.get("pending_action") or ""),
+                        fallback,
+                    ),
+                    state=state,
+                    response_type="need_input",
+                )
+            result = self.run(
+                self._build_conversation_agent_input(
+                    state,
+                    text,
+                    task_type="recommendation",
+                )
+            )
+            return self._conversation_agent_response(
+                state,
+                result,
+                prefix=self._conversation_profile_summary(state),
+            )
+
+        if intent == "extract":
+            fallback = self._with_acknowledgement(
+                state,
+                "请把完整的竞赛通知粘贴过来，我会整理关键信息和报名要求。",
+            )
+            return self._conversation_response(
+                text=fallback,
+                state=state,
+                response_type="need_input",
+            )
+
+        return self._conversation_response(
+            text=(
+                "我还没有完全理解你想继续推荐竞赛、了解某项详情，"
+                "还是准备材料。请再具体说一点。"
+            ),
+            state=state,
+            response_type="need_input",
+        )
+
     def understand_conversation_turn(
         self,
         user_input: str,
@@ -159,8 +351,17 @@ class MainAgent:
                 "competition_scope", "competition_level", "development_goals", "available_time_per_week",
                 "team_preference", "project_name", "material_type",
                 "conversation_summary", "dialogue_action", "recommendation_options",
+                "pending_action",
             ]
         }
+        state_summary["last_recommendations"] = [
+            {
+                "index": index,
+                "title": item.get("title") or item.get("name") or "",
+            }
+            for index, item in enumerate(state.get("last_recommendations", [])[:5], 1)
+            if isinstance(item, dict)
+        ]
         schema = {
             "intent": "collect|extract|recommendation|material|full_process|empty",
             "input_role": (
@@ -168,7 +369,7 @@ class MainAgent:
             ),
             "dialogue_action": (
                 "continue|profile_change|new_recommendation|expand_recommendations|explain_recommendation_count|"
-                "compare_recommendations|competition_detail|change_preferences|generate_material|chat"
+                "compare_recommendations|competition_detail|change_preferences|generate_material|reset_all|chat"
             ),
             "response_mode": "run_agent|answer_from_context|ask_clarification",
             "recommendation_options": {
@@ -194,8 +395,25 @@ class MainAgent:
             "development_goals": ["保研|考研|留学|就业|创业|兴趣提升"],
             "available_time_per_week": "number or null",
             "team_preference": "个人赛|团队赛|无偏好|empty",
+            "project_name": "用户明确提到的竞赛或项目名称；未提及则empty",
+            "selected_recommendation": {
+                "index": "1-based integer or null",
+                "title": "string or empty",
+            },
+            "material_type": (
+                "generic_personal_resume|generic_application_form|generic_project_report|"
+                "generic_ppt|generic_team_description|generic_budget|generic_schedule|empty"
+            ),
             "corrected_fields": ["仅列出用户本轮明确纠正的字段名"],
             "acknowledgement": "不超过45字，自然承接用户的话，不提问",
+            "reply_target": (
+                "collect_major|collect_grade|collect_competition_type|collect_skills|"
+                "collect_competition_level|provide_material_project|empty"
+            ),
+            "reply_text": (
+                "结合用户本轮表达自然承接，并只询问reply_target对应的一项信息；"
+                "不超过120字，不编造竞赛、结果或用户经历"
+            ),
         }
         payload = {
             "model": model,
@@ -234,8 +452,19 @@ class MainAgent:
                         "若已有上一轮推荐结果则response_mode用answer_from_context（由系统从缓存扩容，勿要求重跑）；"
                         "只询问为什么结果少时，"
                         "用explain_recommendation_count和answer_from_context；询问上一轮某项详情或比较时，不要当成新推荐。"
+                        "用户表达要为刚才推荐的某项准备材料时，intent用material、dialogue_action用generate_material；"
+                        "如果提到了推荐序号或名称，把它写入selected_recommendation。"
+                        "材料类型必须归一化为material_type给定枚举；没有明确类型就输出empty，不要猜。"
+                        "如果已有pending_action，优先把本轮短回答理解为对该追问的回答。"
+                        "用户明确要求清空全部记忆、重置会话或重新开始时，dialogue_action用reset_all。"
                         "acknowledgement要像自然对话，优先使用‘明白了’‘了解’‘这样我就清楚了’，"
-                        "不要使用‘已记录’‘字段’‘状态’等系统日志口吻。只输出JSON。"
+                        "不要使用‘已记录’‘字段’‘状态’等系统日志口吻。"
+                        "同时根据已有状态和本轮新增信息，预测系统下一步唯一缺少的信息："
+                        "依次检查专业、年级、竞赛方向、技能、竞赛级别；材料任务没有具体竞赛或项目时"
+                        "使用provide_material_project。把对应动作写入reply_target，并在reply_text中"
+                        "用自然、贴合上下文的语言承接用户后只追问这一项。"
+                        "reply_text不能声称已经完成推荐、搜索或材料生成，不能编造竞赛名称、用户经历、"
+                        "链接或事实；不需要追问时reply_target和reply_text均为空。只输出JSON。"
                     ),
                 },
                 {
@@ -265,6 +494,611 @@ class MainAgent:
             return parsed if isinstance(parsed, dict) else None
         except (urllib.error.URLError, KeyError, IndexError, ValueError, json.JSONDecodeError, TimeoutError):
             return None
+
+    def _normalize_conversation_state(self, value: Any) -> dict[str, Any]:
+        state = self.new_conversation_state()
+        if isinstance(value, dict):
+            for key in state:
+                if key in value:
+                    state[key] = deepcopy(value[key])
+        state["version"] = 1
+        for key in (
+            "interests",
+            "skills",
+            "skill_gaps",
+            "excluded_competition_types",
+            "preferred_levels",
+            "acceptable_levels",
+            "excluded_levels",
+            "development_goals",
+            "last_recommendations",
+            "turns",
+        ):
+            if not isinstance(state.get(key), list):
+                state[key] = []
+        for key in ("last_result", "selected_recommendation", "recommendation_options"):
+            if not isinstance(state.get(key), dict):
+                state[key] = {}
+        return state
+
+    def _is_reset_command(self, message: str) -> bool:
+        normalized = "".join(str(message or "").strip().split()).rstrip("。！!")
+        return normalized in self.reset_commands
+
+    def _apply_conversation_understanding(
+        self,
+        state_snapshot: dict[str, Any],
+        message: str,
+        understanding: dict[str, Any],
+    ) -> dict[str, Any]:
+        state = self._normalize_conversation_state(state_snapshot)
+        state["turns"] = [*state["turns"], message][-12:]
+        state["last_acknowledgement"] = ""
+
+        for key in ("input_role", "dialogue_action", "response_mode"):
+            value = str(understanding.get(key) or "").strip()
+            if value:
+                state[key] = value
+
+        acknowledgement = str(understanding.get("acknowledgement") or "").strip()
+        if acknowledgement:
+            state["last_acknowledgement"] = acknowledgement
+
+        corrected_fields = {
+            str(item).strip()
+            for item in understanding.get("corrected_fields", [])
+            if str(item).strip()
+        }
+        previous_profile = {
+            key: deepcopy(state.get(key))
+            for key in (
+                "major",
+                "grade",
+                "skills",
+                "competition_type",
+                "competition_level",
+                "team_preference",
+            )
+        }
+
+        for key in (
+            "major",
+            "grade",
+            "competition_type",
+            "competition_scope",
+            "competition_level",
+            "team_preference",
+            "project_name",
+        ):
+            value = understanding.get(key)
+            if isinstance(value, str) and value.strip():
+                state[key] = value.strip()
+
+        for status_key in (
+            "skills_status",
+            "competition_type_status",
+            "competition_level_status",
+        ):
+            value = str(understanding.get(status_key) or "").strip()
+            # "unknown" means the field was not resolved in this turn; keep
+            # an earlier explicit provided/no_preference decision.
+            if value in {"provided", "no_preference"}:
+                state[status_key] = value
+
+        state["skills"] = self._append_conversation_values(
+            state["skills"],
+            understanding.get("skills_add", []),
+        )
+        removed_skills = {
+            str(item).strip()
+            for item in understanding.get("skills_remove", [])
+            if str(item).strip()
+        }
+        if removed_skills:
+            state["skills"] = [
+                item for item in state["skills"] if item not in removed_skills
+            ]
+            state["skill_gaps"] = self._append_conversation_values(
+                state["skill_gaps"],
+                removed_skills,
+            )
+        if state["skills"]:
+            state["skills_status"] = "provided"
+
+        for source_key, target_key in (
+            ("excluded_competition_types", "excluded_competition_types"),
+            ("preferred_levels", "preferred_levels"),
+            ("acceptable_levels", "acceptable_levels"),
+            ("excluded_levels", "excluded_levels"),
+            ("development_goals", "development_goals"),
+        ):
+            state[target_key] = self._append_conversation_values(
+                state[target_key],
+                understanding.get(source_key, []),
+            )
+
+        if state["competition_type"]:
+            state["competition_type_status"] = "provided"
+            state["interests"] = self._append_conversation_values(
+                state["interests"],
+                [state["competition_type"]],
+            )
+        if state["competition_level"]:
+            state["competition_level_status"] = "provided"
+
+        available_time = understanding.get("available_time_per_week")
+        if isinstance(available_time, (int, float)) and available_time >= 0:
+            state["available_time_per_week"] = available_time
+
+        selected = understanding.get("selected_recommendation")
+        if isinstance(selected, dict):
+            selection = {
+                "index": selected.get("index"),
+                "title": str(selected.get("title") or "").strip(),
+            }
+            if selection["index"] is not None or selection["title"]:
+                state["selected_recommendation"] = selection
+
+        material_type = str(understanding.get("material_type") or "").strip()
+        if material_type in self.valid_material_types:
+            state["material_type"] = material_type
+
+        options = understanding.get("recommendation_options")
+        if isinstance(options, dict):
+            state["recommendation_options"] = {
+                key: value
+                for key, value in options.items()
+                if key in {
+                    "top_n",
+                    "include_backup",
+                    "relax_quality_gate",
+                    "explanation_requested",
+                }
+            }
+
+        intent = str(understanding.get("intent") or "").strip()
+        if intent:
+            state["intent"] = intent
+        elif state.get("input_role") == "user_profile" and not state.get("intent"):
+            state["intent"] = "recommendation"
+        if state.get("dialogue_action") == "generate_material":
+            state["intent"] = "material"
+
+        profile_changed = bool(
+            corrected_fields
+            & {
+                "major",
+                "grade",
+                "skills",
+                "competition_type",
+                "competition_level",
+                "team_preference",
+            }
+        ) or any(
+            previous_profile[key] != state.get(key)
+            for key in previous_profile
+            if previous_profile[key] not in ("", [], None)
+        )
+        if profile_changed and state.get("dialogue_action") not in {
+            "generate_material",
+            "competition_detail",
+            "compare_recommendations",
+        }:
+            state["last_recommendations"] = []
+            state["last_result"] = {}
+            state["selected_recommendation"] = {}
+            state["project_name"] = ""
+            state["material_type"] = ""
+
+        state["conversation_summary"] = self._build_conversation_state_summary(state)
+        return state
+
+    def _resolve_conversation_intent(
+        self,
+        state: dict[str, Any],
+        understanding: dict[str, Any],
+    ) -> str:
+        action = str(
+            understanding.get("dialogue_action")
+            or state.get("dialogue_action")
+            or ""
+        )
+        if action == "generate_material":
+            return "material"
+        intent = str(
+            understanding.get("intent") or state.get("intent") or ""
+        ).strip()
+        aliases = {
+            "recommend": "recommendation",
+            "generate_material": "material",
+            "info_extract": "extract",
+            "info_collect": "collect",
+        }
+        return aliases.get(intent, intent)
+
+    def _next_recommendation_question(
+        self,
+        state: dict[str, Any],
+    ) -> str | None:
+        if not state.get("major"):
+            state["pending_action"] = "collect_major"
+            return "你现在学习什么专业？"
+        if not state.get("grade"):
+            state["pending_action"] = "collect_grade"
+            return "你目前读大几，或者是在研究生阶段？"
+        if state.get("competition_type_status") == "unknown":
+            state["pending_action"] = "collect_competition_type"
+            return (
+                "你比较感兴趣的竞赛方向是什么？例如人工智能、算法、数学建模或创新创业；"
+                "如果方向不限，也可以直接告诉我。"
+            )
+        if state.get("skills_status") == "unknown":
+            state["pending_action"] = "collect_skills"
+            return (
+                "你目前有哪些比较熟悉的技能、工具或项目经历？"
+                "没有特别擅长的也可以直接说明。"
+            )
+        if state.get("competition_level_status") == "unknown":
+            state["pending_action"] = "collect_competition_level"
+            return (
+                "你更倾向校级、省级、国家级还是国际级？"
+                "如果没有硬性要求也可以直接说明。"
+            )
+        state["pending_action"] = ""
+        return None
+
+    def _semantic_conversation_question(
+        self,
+        understanding: dict[str, Any],
+        expected_target: str,
+        fallback: str,
+    ) -> str:
+        """Use the LLM wording only when it matches MainAgent's decision."""
+        target = str(understanding.get("reply_target") or "").strip()
+        reply = str(understanding.get("reply_text") or "").strip()
+        if (
+            target == expected_target
+            and reply
+            and len(reply) <= 220
+            and "```" not in reply
+            and "http://" not in reply
+            and "https://" not in reply
+        ):
+            return reply
+        return fallback
+
+    def _run_material_conversation(
+        self,
+        message: str,
+        state: dict[str, Any],
+        understanding: dict[str, Any],
+    ) -> dict[str, Any]:
+        recommendations = state.get("last_recommendations", [])
+        if not recommendations and not state.get("project_name"):
+            state["pending_action"] = "provide_material_project"
+            fallback = self._with_acknowledgement(
+                state,
+                "我可以帮你准备材料。请先告诉我具体的竞赛或项目名称，"
+                "或者先完成一次竞赛推荐。",
+            )
+            return self._conversation_response(
+                text=self._semantic_conversation_question(
+                    understanding,
+                    "provide_material_project",
+                    fallback,
+                ),
+                state=state,
+                response_type="need_input",
+            )
+
+        selected = self._resolve_conversation_selection(state, understanding)
+        if recommendations and not selected:
+            state["pending_action"] = "select_material_competition"
+            choices = "\n".join(
+                f"{index}. {item.get('title') or item.get('name') or '未命名竞赛'}"
+                for index, item in enumerate(recommendations[:5], 1)
+            )
+            return self._conversation_response(
+                text=self._with_acknowledgement(
+                    state,
+                    f"你想为哪一个竞赛准备材料？回复序号或名称即可：\n\n{choices}",
+                ),
+                state=state,
+                response_type="need_input",
+            )
+
+        if selected:
+            selected_index = recommendations.index(selected) + 1
+            selected_title = str(
+                selected.get("title") or selected.get("name") or ""
+            )
+            state["selected_recommendation"] = {
+                "index": selected_index,
+                "title": selected_title,
+            }
+            state["project_name"] = selected_title
+
+        if state.get("material_type") not in self.valid_material_types:
+            state["pending_action"] = "select_material_type"
+            return self._conversation_response(
+                text=self._with_acknowledgement(
+                    state,
+                    "想准备哪种材料？可以选择申报书、项目计划书、个人简历、"
+                    "PPT提纲、团队介绍、预算或进度安排。",
+                ),
+                state=state,
+                response_type="need_input",
+            )
+
+        state["pending_action"] = ""
+        result = self.run(
+            self._build_conversation_agent_input(
+                state,
+                message,
+                task_type="material",
+            )
+        )
+        return self._conversation_agent_response(state, result)
+
+    def _resolve_conversation_selection(
+        self,
+        state: dict[str, Any],
+        understanding: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        rows = state.get("last_recommendations", [])
+        selection = understanding.get("selected_recommendation")
+        if not isinstance(selection, dict):
+            selection = state.get("selected_recommendation", {})
+        try:
+            index = int(selection.get("index"))
+        except (TypeError, ValueError):
+            index = 0
+        if 1 <= index <= len(rows):
+            return rows[index - 1]
+        title = str(selection.get("title") or "").strip()
+        if title:
+            for row in rows:
+                candidate = str(
+                    row.get("title") or row.get("name") or ""
+                ).strip()
+                if candidate and (
+                    candidate == title or candidate in title or title in candidate
+                ):
+                    return row
+        return None
+
+    def _build_conversation_agent_input(
+        self,
+        state_snapshot: dict[str, Any],
+        message: str,
+        *,
+        task_type: str,
+    ) -> dict[str, Any]:
+        state = self._normalize_conversation_state(state_snapshot)
+        profile = {
+            "major": state["major"],
+            "grade": state["grade"],
+            "education_level": (
+                "研究生" if state["grade"] == "研究生" else "本科"
+            ),
+            "interests": state["interests"],
+            "skills": state["skills"],
+            "skill_gaps": state["skill_gaps"],
+            "competition_level": state["competition_level"],
+            "development_goals": state["development_goals"],
+            "available_time_per_week": state["available_time_per_week"],
+            "team_preference": state["team_preference"],
+        }
+        payload: dict[str, Any] = {
+            "data_source": "web",
+            "preferences": {
+                "preferred_levels": state["preferred_levels"],
+                "acceptable_levels": state["acceptable_levels"],
+                "excluded_levels": state["excluded_levels"],
+                "excluded_competition_types": state[
+                    "excluded_competition_types"
+                ],
+                "competition_scope": state["competition_scope"],
+            },
+        }
+        if state["competition_type"]:
+            payload["keywords"] = [state["competition_type"]]
+        if task_type == "recommendation" and state["recommendation_options"]:
+            payload["recommendation_rules"] = state["recommendation_options"]
+        if task_type == "material":
+            selected = self._resolve_conversation_selection(state, {})
+            payload["material_type"] = state["material_type"]
+            if selected:
+                name = (
+                    selected.get("title")
+                    or selected.get("name")
+                    or state["project_name"]
+                )
+                payload["project_info"] = {
+                    **selected,
+                    "project_name": name,
+                    "title": name,
+                    "background": (
+                        selected.get("summary")
+                        or selected.get("reason")
+                        or "根据上一轮推荐结果生成。"
+                    ),
+                }
+                payload["competition_info"] = {
+                    **selected,
+                    "competition_name": name,
+                }
+            elif state["project_name"]:
+                payload["project_info"] = {
+                    "project_name": state["project_name"],
+                    "title": state["project_name"],
+                    "background": "根据对话中提供的项目信息生成。",
+                }
+
+        return {
+            "task_id": f"web_chat_{uuid4().hex[:8]}",
+            "user_input": message,
+            "task_type": task_type,
+            "user_profile": profile,
+            "context": {
+                "conversation_summary": state["conversation_summary"],
+                "recent_turns": state["turns"][-6:],
+            },
+            "input_data": payload,
+            "history": [],
+            "required_output": "markdown",
+            "metadata": {
+                "source": "main_agent_conversation",
+                "ui_version": "4.0",
+            },
+        }
+
+    def _conversation_agent_response(
+        self,
+        state: dict[str, Any],
+        result: dict[str, Any],
+        *,
+        prefix: str = "",
+    ) -> dict[str, Any]:
+        state["last_result"] = result if isinstance(result, dict) else {}
+        recommendations = self._conversation_recommendations(result)
+        if recommendations:
+            state["last_recommendations"] = recommendations
+        text = self._conversation_result_text(result)
+        if prefix:
+            text = f"{prefix}\n\n{text}"
+        status = str(result.get("status") or "failed")
+        response_type = "result" if recommendations else "agent"
+        if status in {"failed", "skipped"}:
+            response_type = "error"
+        elif status == "need_input":
+            response_type = "need_input"
+        return self._conversation_response(
+            text=text,
+            state=state,
+            response_type=response_type,
+            success=status in {"success", "partial"},
+            recommendations=recommendations,
+            files=self._conversation_files(result),
+        )
+
+    def _conversation_recommendations(
+        self,
+        result: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        if not isinstance(result, dict):
+            return []
+        data = result.get("data", {})
+        agent_results = data.get("agent_results", []) if isinstance(data, dict) else []
+        for item in agent_results:
+            rows = item.get("data", {}).get("recommendations", [])
+            if isinstance(rows, list) and rows:
+                return [row for row in rows if isinstance(row, dict)]
+        return []
+
+    def _conversation_files(self, result: dict[str, Any]) -> list[str]:
+        files: list[str] = []
+        if not isinstance(result, dict):
+            return files
+        for item in result.get("data", {}).get("agent_results", []):
+            for value in item.get("data", {}).get("_saved_files", []) or []:
+                path = str(value or "").strip()
+                if path:
+                    files.append(path)
+        return files
+
+    def _conversation_result_text(self, result: dict[str, Any]) -> str:
+        if not isinstance(result, dict):
+            return "处理失败，请稍后重试。"
+        data = result.get("data", {})
+        text = data.get("final_answer") if isinstance(data, dict) else ""
+        return str(text or result.get("message") or "处理完成。")
+
+    def _conversation_profile_summary(self, state: dict[str, Any]) -> str:
+        direction = state["competition_type"] or "方向不限"
+        skills = (
+            "、".join(state["skills"])
+            if state["skills"]
+            else "暂无特别擅长"
+        )
+        level = state["competition_level"] or "级别不限"
+        return (
+            f"明白了。我会按照**{state['major']}、{state['grade']}**，"
+            f"竞赛方向为**{direction}**、技能情况为**{skills}**、"
+            f"偏好**{level}**来进行推荐。"
+        )
+
+    def _with_acknowledgement(
+        self,
+        state: dict[str, Any],
+        text: str,
+    ) -> str:
+        acknowledgement = str(
+            state.get("last_acknowledgement") or ""
+        ).strip()
+        return f"{acknowledgement}\n\n{text}" if acknowledgement else text
+
+    def _append_conversation_values(
+        self,
+        existing: list[Any],
+        values: Any,
+    ) -> list[str]:
+        result = [
+            str(item).strip()
+            for item in existing
+            if str(item).strip()
+        ]
+        iterable = values if isinstance(values, (list, tuple, set)) else []
+        for item in iterable:
+            value = str(item).strip()
+            if value and value not in result:
+                result.append(value)
+        return result
+
+    def _build_conversation_state_summary(
+        self,
+        state: dict[str, Any],
+    ) -> str:
+        parts = []
+        for label, key in (
+            ("专业", "major"),
+            ("年级", "grade"),
+            ("方向", "competition_type"),
+            ("级别", "competition_level"),
+            ("材料", "material_type"),
+        ):
+            value = state.get(key)
+            if value:
+                parts.append(f"{label}:{value}")
+        if state.get("skills"):
+            parts.append(f"技能:{'、'.join(state['skills'])}")
+        return "；".join(parts)
+
+    def _conversation_response(
+        self,
+        *,
+        text: str,
+        state: dict[str, Any],
+        response_type: str = "agent",
+        success: bool = True,
+        recommendations: list[dict[str, Any]] | None = None,
+        files: list[str] | None = None,
+        reset: bool = False,
+    ) -> dict[str, Any]:
+        return {
+            "success": success,
+            "response": {
+                "text": str(text or ""),
+                "type": response_type,
+                "files": files or [],
+                "recommendations": recommendations or [],
+            },
+            "state_snapshot": self._normalize_conversation_state(state),
+            "metadata": {
+                "status": "success" if success else "error",
+                "reset": reset,
+            },
+        }
 
     def handle_followup(
         self,

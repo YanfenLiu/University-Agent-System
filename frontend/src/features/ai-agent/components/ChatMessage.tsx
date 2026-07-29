@@ -1,5 +1,6 @@
 import { Typography } from "antd";
 import { RobotOutlined, UserOutlined } from "@ant-design/icons";
+import ReactMarkdown from "react-markdown";
 import type { Message } from "../types";
 
 interface ChatMessageProps {
@@ -56,16 +57,77 @@ export function ChatMessage({ message, colorPrimary }: ChatMessageProps) {
           overflow: "hidden",
         }}
       >
-        <Typography.Text
-          style={{
-            color: isUser ? "#fff" : "rgba(15,23,42,0.85)",
-            fontSize: 14,
-            position: "relative",
-            zIndex: 1,
-          }}
-        >
-          {message.content}
-        </Typography.Text>
+        {isUser ? (
+          <Typography.Text
+            style={{
+              color: "#fff",
+              fontSize: 14,
+              position: "relative",
+              zIndex: 1,
+            }}
+          >
+            {message.content}
+          </Typography.Text>
+        ) : (
+          <div
+            style={{
+              color: "rgba(15,23,42,0.85)",
+              fontSize: 14,
+              position: "relative",
+              zIndex: 1,
+            }}
+          >
+            <ReactMarkdown
+              components={{
+                p: ({ children }) => (
+                  <p style={{ margin: "0 0 8px" }}>{children}</p>
+                ),
+                ul: ({ children }) => (
+                  <ul style={{ margin: "4px 0 8px", paddingLeft: 22 }}>
+                    {children}
+                  </ul>
+                ),
+                ol: ({ children }) => (
+                  <ol style={{ margin: "4px 0 8px", paddingLeft: 22 }}>
+                    {children}
+                  </ol>
+                ),
+                a: ({ children, href }) => (
+                  <a href={href} target="_blank" rel="noreferrer">
+                    {children}
+                  </a>
+                ),
+                code: ({ children }) => (
+                  <code
+                    style={{
+                      padding: "1px 5px",
+                      borderRadius: 4,
+                      background: "rgba(15,23,42,0.06)",
+                    }}
+                  >
+                    {children}
+                  </code>
+                ),
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
+          </div>
+        )}
+        {!isUser && message.files && message.files.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            {message.files.map((url, index) => (
+              <a
+                key={url}
+                href={url}
+                download
+                style={{ display: "block", marginTop: 4 }}
+              >
+                下载生成文件{message.files!.length > 1 ? ` ${index + 1}` : ""}
+              </a>
+            ))}
+          </div>
+        )}
       </div>
 
       {isUser && (

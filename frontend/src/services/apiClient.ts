@@ -6,6 +6,10 @@ function buildUrl(path: string) {
   return `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+export function apiUrl(path: string) {
+  return buildUrl(path);
+}
+
 export interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   headers?: Record<string, string>;
