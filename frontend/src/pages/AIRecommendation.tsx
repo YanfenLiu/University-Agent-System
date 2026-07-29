@@ -145,7 +145,7 @@ export function AIRecommendation() {
             </div>
 
             {/* 输入区域 */}
-            <div style={{ padding: "10px 20px 8px", borderTop: "1px solid rgba(15, 23, 42, 0.06)", background: "#fff" }}>
+            <div style={{ padding: "10px 20px 4px", borderTop: "1px solid rgba(15, 23, 42, 0.06)", background: "#fff" }}>
               <Input.TextArea
                 ref={inputRef}
                 value={input}
