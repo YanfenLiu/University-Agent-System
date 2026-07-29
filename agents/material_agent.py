@@ -74,7 +74,9 @@ class MaterialAgent:
         "generic_team_description",
         "generic_budget",
         "generic_schedule",
-        "generic_personal_resume",
+        "generic_prep_plan",
+        "generic_project_brief",
+        "generic_team_building",
     }
 
     # ---- 合法的输出格式 ----
@@ -82,6 +84,239 @@ class MaterialAgent:
 
     # ---- 合法的状态值 ----
     VALID_STATUSES = {"success", "failed", "partial", "need_input", "skipped"}
+
+    # ---- 竞赛 → 大类映射（关键词→类别）----
+    COMPETITION_CATEGORIES = [
+        (["创新创业", "小挑", "大挑", "互联网+", "三创", "大创", "创业计划",
+          "课外学术", "创青春", "挑战杯"], "创新创业"),
+        (["数学建模", "建模", "Mathorcup", "华数杯", "统计建模"], "数学建模"),
+        (["算法", "程序设计", "编程", "ACM", "蓝桥杯", "天梯赛",
+          "软件设计", "计算机设计"], "编程算法"),
+        (["英语", "翻译", "词汇", "口语", "外语", "演讲", "辩论"], "英语外语"),
+        (["国学", "诗词", "文学", "语文", "写作", "征文", "文案",
+          "文化"], "人文社科"),
+        (["知识竞赛", "百科", "党史", "军事", "金融", "证券",
+          "模拟", "沙盘", "营销"], "知识技能"),
+        (["设计", "美术", "摄影", "动漫", "视频", "广告",
+          "建筑", "景观", "规划"], "艺术设计"),
+        (["数学", "物理", "化学", "生物", "电子", "电气",
+          "机械", "智能车", "机器人", "无人机", "航空航天"], "理工学科"),
+        (["医学", "护理", "药学", "公共卫生", "临床"], "医学健康"),
+    ]
+
+    # ---- 大类 → 所需材料映射 ----
+    CATEGORY_MATERIALS = {
+        "创新创业": [
+            ("generic_project_report", "计划书/策划书", "核心材料"),
+            ("generic_ppt", "路演PPT", "答辩展示"),
+            ("generic_application_form", "申报书/报名表", ""),
+            ("generic_budget", "经费预算表", "如有经费需求"),
+            ("generic_team_description", "团队分工说明", ""),
+        ],
+        "数学建模": [
+            ("generic_application_form", "报名表", "3人组队"),
+            ("generic_team_description", "团队分工", "建模+编程+写作"),
+            ("generic_project_brief", "建模方案简述", "解题思路+方法概述"),
+            ("generic_team_building", "组队建议", "技能组合推荐"),
+            ("generic_prep_plan", "备赛学习计划", "工具学习+真题演练"),
+        ],
+        "编程算法": [
+            ("generic_personal_resume", "个人简历", "突出编程能力和竞赛成绩"),
+            ("generic_application_form", "报名表", ""),
+            ("generic_prep_plan", "备赛学习计划", "刷题+模拟赛"),
+            ("generic_team_building", "组队建议", "如为团队赛"),
+        ],
+        "英语外语": [
+            ("generic_personal_resume", "个人简历", "突出语言成绩和获奖"),
+            ("generic_application_form", "报名表", ""),
+            ("generic_prep_plan", "备赛学习计划", "词汇+听力+阅读+写作"),
+            ("generic_project_brief", "演讲稿/作文", "如需提交作品"),
+        ],
+        "人文社科": [
+            ("generic_application_form", "报名表", ""),
+            ("generic_prep_plan", "备赛学习计划", "阅读积累+写作训练"),
+            ("generic_project_brief", "作品简述", "创作思路+作品亮点"),
+        ],
+        "知识技能": [
+            ("generic_application_form", "报名表", ""),
+            ("generic_prep_plan", "备赛学习计划", "知识点梳理+模拟测试"),
+        ],
+        "艺术设计": [
+            ("generic_personal_resume", "个人简历", "突出设计能力和作品集"),
+            ("generic_project_brief", "作品简述", "设计理念+创作过程"),
+            ("generic_application_form", "报名表", ""),
+        ],
+        "理工学科": [
+            ("generic_application_form", "报名表", ""),
+            ("generic_prep_plan", "备赛学习计划", "理论复习+实验/设计训练"),
+            ("generic_project_brief", "作品/方案简述", "设计思路+技术方案"),
+        ],
+        "医学健康": [
+            ("generic_application_form", "报名表", ""),
+            ("generic_prep_plan", "备赛学习计划", "理论知识+技能操作"),
+        ],
+        "_default": [
+            ("generic_personal_resume", "个人简历", "竞赛报名用"),
+            ("generic_application_form", "报名表", "通用格式"),
+        ],
+    }
+
+    # ---- 竞赛 → 所需材料映射（精确匹配，优先级高于大类）----
+    COMPETITION_MATERIALS = {
+        # 创新创业类
+        "小挑": [
+            ("challenge_cup_business_plan", "创业计划书", "核心材料，10章结构"),
+            ("challenge_cup_business_ppt", "路演PPT", "≤20页，5-8分钟"),
+            ("challenge_cup_business_application", "项目申报书", "含盖章标记"),
+            ("challenge_cup_business_checklist", "支撑材料清单", "按参赛层级"),
+        ],
+        "创业计划竞赛": [
+            ("challenge_cup_business_plan", "创业计划书", "核心材料"),
+            ("challenge_cup_business_ppt", "路演PPT", "≤20页"),
+            ("challenge_cup_business_application", "项目申报书", ""),
+            ("challenge_cup_business_checklist", "支撑材料清单", ""),
+        ],
+        "大挑": [
+            ("challenge_cup_grand_application", "作品申报书", "含A/B/C/D/E五表"),
+            ("challenge_cup_grand_checklist", "支撑材料清单", "按赛道分类"),
+        ],
+        "课外学术科技": [
+            ("challenge_cup_grand_application", "作品申报书", "核心材料"),
+            ("challenge_cup_grand_checklist", "支撑材料清单", ""),
+        ],
+        "互联网+": [
+            ("innovation_contest_business_plan", "商业计划书", "12章+附件"),
+            ("innovation_contest_ppt", "路演PPT", "≤20页"),
+            ("innovation_contest_application_form", "项目申报表", "≤500字"),
+            ("innovation_contest_video_script", "一分钟视频脚本", "≤60秒"),
+            ("innovation_contest_checklist", "支撑材料清单", ""),
+        ],
+        "中国国际大学生创新": [
+            ("innovation_contest_business_plan", "商业计划书", "核心材料"),
+            ("innovation_contest_ppt", "路演PPT", ""),
+            ("innovation_contest_application_form", "项目申报表", ""),
+            ("innovation_contest_video_script", "一分钟视频脚本", ""),
+            ("innovation_contest_checklist", "支撑材料清单", ""),
+        ],
+        # 编程/算法类
+        "蓝桥杯": [
+            ("generic_personal_resume", "个人简历", "突出编程能力和竞赛经历"),
+            ("generic_application_form", "报名表", "基本信息+参赛语言"),
+        ],
+        "算法": [
+            ("generic_personal_resume", "个人简历", "突出算法竞赛经历"),
+            ("generic_application_form", "报名表", ""),
+        ],
+        "ACM": [
+            ("generic_personal_resume", "个人简历", "突出ACM经历"),
+            ("generic_schedule", "备赛时间表", "训练+模拟赛安排"),
+        ],
+        # 数学建模类
+        "数学建模": [
+            ("generic_application_form", "报名表", "3人组队信息"),
+            ("generic_project_report", "项目摘要/方案", "建模思路简述"),
+            ("generic_team_description", "团队分工", "建模+编程+写作"),
+        ],
+        "建模": [
+            ("generic_application_form", "报名表", ""),
+            ("generic_team_description", "团队分工", ""),
+        ],
+        "华数杯": [
+            ("generic_application_form", "报名表", ""),
+            ("generic_team_description", "团队分工", ""),
+        ],
+        # 学科竞赛类
+        "大创": [
+            ("generic_application_form", "申报书", ""),
+            ("generic_project_report", "项目计划书", "9章标准结构"),
+            ("generic_budget", "经费预算表", ""),
+            ("generic_schedule", "时间进度表", "6阶段"),
+        ],
+        "大学生创新创业": [
+            ("generic_application_form", "申报书", ""),
+            ("generic_project_report", "项目计划书", ""),
+            ("generic_budget", "经费预算表", ""),
+            ("generic_schedule", "时间进度表", ""),
+        ],
+        "三创": [
+            ("generic_application_form", "申报书", ""),
+            ("generic_project_report", "项目计划书", ""),
+            ("generic_ppt", "路演PPT", ""),
+        ],
+        # 英语/外语类
+        "英语": [
+            ("generic_personal_resume", "个人简历", "突出英语能力和相关经历"),
+            ("generic_application_form", "报名表", ""),
+            ("generic_prep_plan", "备赛学习计划", "词汇+阅读+听力+写作"),
+        ],
+        "词汇": [
+            ("generic_application_form", "报名表", ""),
+            ("generic_prep_plan", "备赛学习计划", "每日词汇量+复习计划"),
+        ],
+        "写作": [
+            ("generic_personal_resume", "个人简历", "突出写作能力和获奖经历"),
+            ("generic_project_brief", "作品简述", "参赛作品的创作思路和亮点"),
+        ],
+        "翻译": [
+            ("generic_personal_resume", "个人简历", "突出语言能力和翻译经历"),
+            ("generic_application_form", "报名表", ""),
+        ],
+        "演讲": [
+            ("generic_personal_resume", "个人简历", "突出演讲经历和语言能力"),
+            ("generic_project_brief", "演讲稿摘要", "演讲主题和核心观点"),
+        ],
+        "外语": [
+            ("generic_personal_resume", "个人简历", "突出外语能力"),
+            ("generic_application_form", "报名表", ""),
+        ],
+        "口语": [
+            ("generic_personal_resume", "个人简历", ""),
+            ("generic_application_form", "报名表", ""),
+        ],
+        # 文史/国学/诗词类
+        "国学": [
+            ("generic_application_form", "报名表", ""),
+            ("generic_prep_plan", "备赛学习计划", "经典阅读+知识点梳理"),
+        ],
+        "诗词": [
+            ("generic_application_form", "报名表", ""),
+            ("generic_prep_plan", "备赛学习计划", "诗词积累+鉴赏训练"),
+        ],
+        "文学": [
+            ("generic_personal_resume", "个人简历", "突出文学素养和写作经历"),
+            ("generic_project_brief", "作品简述", "参赛作品/文章简介"),
+        ],
+        "语文": [
+            ("generic_application_form", "报名表", ""),
+            ("generic_prep_plan", "备赛学习计划", "基础知识+写作训练"),
+        ],
+        "知识竞赛": [
+            ("generic_application_form", "报名表", ""),
+            ("generic_prep_plan", "备赛学习计划", "知识点梳理+模拟测试"),
+        ],
+        # 艺术设计类
+        "设计": [
+            ("generic_personal_resume", "个人简历", "突出设计能力和作品集"),
+            ("generic_project_brief", "作品简述", "设计理念+创作过程"),
+        ],
+        "美术": [
+            ("generic_personal_resume", "个人简历", ""),
+            ("generic_project_brief", "作品简述", "作品介绍"),
+        ],
+        "摄影": [
+            ("generic_personal_resume", "个人简历", ""),
+            ("generic_project_brief", "作品简述", "拍摄主题+创作说明"),
+        ],
+        "视频": [
+            ("generic_project_brief", "作品简述", "视频主题+创作思路"),
+        ],
+        # 通用兜底
+        "_default": [
+            ("generic_personal_resume", "个人简历", "竞赛报名用"),
+            ("generic_application_form", "报名表", "通用格式"),
+            ("generic_prep_plan", "备赛学习计划", "赛前准备"),
+        ],
+    }
 
     # ---- 竞赛名称 → 默认材料类型映射（推断用）----
     # key: 竞赛名称关键词（模糊匹配）
@@ -264,6 +499,34 @@ class MaterialAgent:
                 }
         """
         task_id = input_data.get("task_id", "")
+
+        # ---- 建议模式：返回竞赛所需材料清单 ----
+        task_type = input_data.get("task_type", "")
+        inner = input_data.get("input_data", {})
+        if task_type == "suggest_materials" or inner.get("material_type") == "_suggest":
+            comp_name = (
+                inner.get("competition_info", {}).get("title", "")
+                or inner.get("competition_info", {}).get("competition_name", "")
+                or input_data.get("user_input", "")
+            )
+            suggestions = self.suggest_materials(comp_name)
+            return {
+                "task_id": task_id,
+                "agent_name": "material_agent",
+                "status": "success",
+                "data": {
+                    "material_type": "_suggest",
+                    "material_name": "材料建议清单",
+                    "suggestions": suggestions["materials"],
+                    "source": suggestions["source"],
+                    "content": {"sections": []},
+                    "checklist": [],
+                },
+                "message": f"根据'{suggestions['source']}'匹配到 {len(suggestions['materials'])} 项材料建议。",
+                "error": None,
+                "next_action": None,
+                "metadata": self._make_metadata(),
+            }
 
         # Step 1: 校验输入
         validation_error = self.validate_input(input_data)
@@ -450,6 +713,38 @@ class MaterialAgent:
             inference_note = ""
             diag["inference_used"] = False
 
+        # ---- Step 2.5: 通用模板 → 竞赛专属模板升级 ----
+        _generic_to_specific = {
+            "generic_project_report": {
+                "小挑": "challenge_cup_business_plan", "创业计划": "challenge_cup_business_plan",
+                "大挑": "challenge_cup_grand_report_invention", "课外学术": "challenge_cup_grand_report_invention",
+                "互联网": "innovation_contest_business_plan", "中国国际": "innovation_contest_business_plan",
+            },
+            "generic_ppt": {
+                "小挑": "challenge_cup_business_ppt", "创业计划": "challenge_cup_business_ppt",
+                "大挑": "challenge_cup_grand_ppt", "课外学术": "challenge_cup_grand_ppt",
+                "互联网": "innovation_contest_ppt", "中国国际": "innovation_contest_ppt",
+            },
+            "generic_application_form": {
+                "小挑": "challenge_cup_business_application", "创业计划": "challenge_cup_business_application",
+                "大挑": "challenge_cup_grand_application", "课外学术": "challenge_cup_grand_application",
+                "互联网": "innovation_contest_application_form", "中国国际": "innovation_contest_application_form",
+            },
+        }
+        upgrade_map = _generic_to_specific.get(material_type, {})
+        if upgrade_map and competition_info:
+            comp_text = (
+                competition_info.get("competition_name", "")
+                or competition_info.get("title", "")
+                or competition_info.get("competition_type", "")
+            )
+            for keyword, specific_type in upgrade_map.items():
+                if keyword in comp_text:
+                    material_type = specific_type
+                    diag["material_type_upgraded"] = material_type
+                    inference_note = f"（升级为竞赛专属模板：{keyword}→{material_type}）"
+                    break
+
         # ---- Step 3: 预检关键字段，缺太多则追问 ----
         missing_check = self._check_missing_fields(project_info, material_type, user_profile)
         diag["missing_check_triggered"] = missing_check["need_input"]
@@ -516,6 +811,32 @@ class MaterialAgent:
         return result
 
     # ============================================================
+    # ============================================================
+    # _suggest_materials — 竞赛→材料清单
+    # ============================================================
+
+    def suggest_materials(self, competition_name: str) -> dict:
+        """
+        按竞赛大类匹配所需材料，新比赛自动归入对应大类。
+
+        Returns:
+            {"materials": [...], "category": "大类名", "source": "匹配来源"}
+        """
+        for keywords, category in self.COMPETITION_CATEGORIES:
+            if any(kw in competition_name for kw in keywords):
+                return {
+                    "materials": self.CATEGORY_MATERIALS.get(
+                        category, self.CATEGORY_MATERIALS["_default"]
+                    ),
+                    "category": category,
+                    "source": category,
+                }
+        return {
+            "materials": self.CATEGORY_MATERIALS["_default"],
+            "category": "通用",
+            "source": "_default",
+        }
+
     # ============================================================
     # _check_missing_fields — 预检关键字段
     # ============================================================

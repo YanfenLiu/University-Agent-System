@@ -52,19 +52,28 @@ DATA_SOURCE_CHOICES = [
 
 MATERIAL_TYPE_CHOICES = [
     ("自动识别", ""),
-    ("挑战杯（大挑）申报书", "challenge_cup_grand_application"),
-    ("挑战杯（大挑）材料清单", "challenge_cup_grand_checklist"),
-    ("挑战杯（大挑）答辩 PPT", "challenge_cup_grand_ppt"),
-    ("挑战杯创业计划书", "challenge_cup_business_plan"),
-    ("挑战杯创业材料清单", "challenge_cup_business_checklist"),
-    ("互联网+ / 创新创业商业计划书", "innovation_contest_business_plan"),
-    ("互联网+ / 创新创业申报表", "innovation_contest_application_form"),
-    ("互联网+ / 创新创业材料清单", "innovation_contest_checklist"),
-    ("通用申报表", "generic_application_form"),
-    ("竞赛报名个人简历", "generic_personal_resume"),
+    ("大挑-作品申报书", "challenge_cup_grand_application"),
+    ("大挑-自然科学论文", "challenge_cup_grand_paper_natural"),
+    ("大挑-社科调查报告", "challenge_cup_grand_report_social"),
+    ("大挑-科技发明报告", "challenge_cup_grand_report_invention"),
+    ("大挑-答辩PPT", "challenge_cup_grand_ppt"),
+    ("大挑-材料清单", "challenge_cup_grand_checklist"),
+    ("小挑-创业计划书", "challenge_cup_business_plan"),
+    ("小挑-路演PPT", "challenge_cup_business_ppt"),
+    ("小挑-申报书", "challenge_cup_business_application"),
+    ("小挑-材料清单", "challenge_cup_business_checklist"),
+    ("互联网+-商业计划书", "innovation_contest_business_plan"),
+    ("互联网+-路演PPT", "innovation_contest_ppt"),
+    ("互联网+-申报表", "innovation_contest_application_form"),
+    ("互联网+-视频脚本", "innovation_contest_video_script"),
+    ("互联网+-材料清单", "innovation_contest_checklist"),
+    ("通用申报书", "generic_application_form"),
     ("通用项目报告", "generic_project_report"),
-    ("通用答辩 PPT", "generic_ppt"),
-    ("通用准备进度表", "generic_schedule"),
+    ("通用路演PPT", "generic_ppt"),
+    ("团队分工说明书", "generic_team_description"),
+    ("经费预算表", "generic_budget"),
+    ("时间进度表", "generic_schedule"),
+    ("个人简历", "generic_personal_resume"),
 ]
 
 APP_CSS = r"""
@@ -595,8 +604,17 @@ def _detect_chat_intent(text: str, current_intent: str = "") -> str:
     }:
         # A long pasted notice is task input, not a request to switch agents.
         return current_intent
-    strong_material_words = ["报名表", "简历", "计划书", "PPT", "材料清单"]
-    general_material_words = ["材料", "资料", "文档", "申报书"]
+    strong_material_words = [
+        "报名表", "简历", "履历", "计划书", "ppt", "PPT", "材料清单",
+        "申报书", "申报表", "策划书", "研究报告", "项目报告",
+        "论文", "调查报告", "视频脚本", "路演", "预算", "经费", "团队分工", "分工",
+    ]
+    material_query_words = [
+        "准备材料", "需要准备", "需要什么", "需要哪些",
+        "准备什么", "准备哪些", "要准备", "有什么材料",
+        "怎么准备", "如何准备", "该准备", "备赛",
+    ]
+    general_material_words = ["材料", "资料", "文档", "申报书", "备赛"]
     generation_words = ["生成", "制作", "撰写", "写一份", "准备", "帮我做", "想要"]
     recommendation_words = ["推荐", "匹配", "适合", "筛选", "重新找", "换一批"]
     extraction_words = ["提取", "抽取", "解析", "整理通知", "报名要求"]
@@ -608,6 +626,7 @@ def _detect_chat_intent(text: str, current_intent: str = "") -> str:
     )
     wants_material = not cancels_material and (
         any(word in text for word in strong_material_words)
+        or any(word in text for word in material_query_words)
         or (
             any(word in text for word in general_material_words)
             and any(word in text for word in generation_words)
@@ -627,6 +646,9 @@ def _detect_chat_intent(text: str, current_intent: str = "") -> str:
         return "extract"
     if any(word in text for word in collection_words):
         return "collect"
+    # 已有明确 intent（如 material）时，不被"项目""竞赛"等泛词覆盖
+    if current_intent in {"material", "extract"}:
+        return current_intent
     if requests_new_recommendation or any(word in text for word in ["竞赛", "比赛", "项目"]):
         return "recommendation"
     return current_intent
@@ -1314,12 +1336,59 @@ def _update_chat_state(
             state["project_name"] = fact_text.split(separator, 1)[1].strip()
 
     material_map = {
+        # 个人简历
         "报名简历": "generic_personal_resume", "个人简历": "generic_personal_resume",
-        "简历": "generic_personal_resume", "报名表": "generic_application_form",
-        "项目申报书": "generic_application_form", "申报书": "generic_application_form",
-        "申报表": "generic_application_form",
-        "计划书": "innovation_contest_business_plan",
-        "PPT": "generic_ppt", "进度表": "generic_schedule", "清单": "challenge_cup_grand_checklist",
+        "简历": "generic_personal_resume", "履历": "generic_personal_resume",
+        "自我介绍": "generic_personal_resume",
+        # 申报书/申报表
+        "申报书": "generic_application_form", "申报表": "generic_application_form",
+        "报名表": "generic_application_form", "申请表": "generic_application_form",
+        "项目申报书": "generic_application_form", "申请书": "generic_application_form",
+        # 计划书/报告（通用兜底，MaterialAgent 自动升级为竞赛专属）
+        "计划书": "generic_project_report", "商业计划书": "generic_project_report",
+        "创业计划书": "generic_project_report", "项目计划书": "generic_project_report",
+        "策划书": "generic_project_report", "方案书": "generic_project_report",
+        "研究报告": "generic_project_report", "项目报告": "generic_project_report",
+        "立项书": "generic_project_report",
+        # PPT/路演
+        "PPT": "generic_ppt", "ppt": "generic_ppt", "路演": "generic_ppt",
+        "幻灯片": "generic_ppt", "演示文稿": "generic_ppt", "答辩PPT": "generic_ppt",
+        # 清单
+        "材料清单": "challenge_cup_grand_checklist", "清单": "challenge_cup_grand_checklist",
+        "准备清单": "challenge_cup_grand_checklist", "需要什么材料": "challenge_cup_grand_checklist",
+        # 学术论文
+        "论文": "challenge_cup_grand_paper_natural", "学术论文": "challenge_cup_grand_paper_natural",
+        "发表论文": "challenge_cup_grand_paper_natural",
+        # 调查报告
+        "调查报告": "challenge_cup_grand_report_social", "调研报告": "challenge_cup_grand_report_social",
+        "社会调查": "challenge_cup_grand_report_social", "问卷": "challenge_cup_grand_report_social",
+        # 视频脚本
+        "视频脚本": "innovation_contest_video_script", "视频": "innovation_contest_video_script",
+        "拍摄脚本": "innovation_contest_video_script", "宣传片": "innovation_contest_video_script",
+        # 进度/时间
+        "进度表": "generic_schedule", "进度": "generic_schedule",
+        "时间规划": "generic_schedule", "时间表": "generic_schedule",
+        "甘特图": "generic_schedule", "时间安排": "generic_schedule",
+        "什么时候": "generic_schedule",
+        # 预算/经费
+        "预算": "generic_budget", "经费": "generic_budget",
+        "要花多少钱": "generic_budget", "费用": "generic_budget",
+        "多少钱": "generic_budget", "开销": "generic_budget",
+        # 团队分工
+        "团队分工": "generic_team_description", "分工": "generic_team_description",
+        "谁做什么": "generic_team_description", "怎么分工": "generic_team_description",
+        "人员安排": "generic_team_description", "角色分配": "generic_team_description",
+        # 备赛/准备
+        "备战计划": "generic_prep_plan", "备赛": "generic_prep_plan",
+        "学习计划": "generic_prep_plan", "复习计划": "generic_prep_plan",
+        "怎么准备": "generic_prep_plan", "如何备赛": "generic_prep_plan",
+        # 项目简述/作品说明
+        "项目简述": "generic_project_brief", "作品简述": "generic_project_brief",
+        "项目简介": "generic_project_brief", "作品说明": "generic_project_brief",
+        # 组队建议
+        "组队": "generic_team_building", "怎么组队": "generic_team_building",
+        "找队友": "generic_team_building", "组队建议": "generic_team_building",
+        "组队方案": "generic_team_building", "队伍配置": "generic_team_building",
     }
     for keyword, material_type in material_map.items():
         if keyword in fact_text:
@@ -1611,6 +1680,9 @@ def _next_chat_question(state: dict[str, Any]) -> str | None:
         if not state.get("grade"):
             return "专业方向了解了。你目前读大几，或者是在研究生阶段？我会据此判断参赛资格。"
     if state["intent"] == "material":
+        # 材料类型+基本信息已齐 → 直接放行给 MaterialAgent，不再拦截
+        if state.get("material_type") and state.get("major") and state.get("grade"):
+            return None
         recommendations = _recommendations_from_chat_state(state)
         if (
             not state.get("notification_text")
@@ -1655,6 +1727,27 @@ def _next_chat_question(state: dict[str, Any]) -> str | None:
         if not state.get("project_name") and len(recommendations) == 1:
             state["project_name"] = str(recommendations[0].get("title", ""))
         if not state.get("material_type"):
+            # 调用 MaterialAgent 获取竞赛专属材料建议
+            project_name = state.get("project_name", "")
+            if project_name:
+                try:
+                    agent = MainAgent(config=load_config())
+                    if "material" in agent.sub_agents:
+                        mat_agent = agent.sub_agents["material"]
+                        if not isinstance(mat_agent, dict):
+                            suggestions = mat_agent.suggest_materials(project_name)
+                            materials = suggestions.get("materials", [])
+                            if materials:
+                                lines = [f"根据「{project_name}」，建议准备以下材料："]
+                                for i, (mt, name, note) in enumerate(materials, 1):
+                                    line = f"  {i}. {name}"
+                                    if note:
+                                        line += f"（{note}）"
+                                    lines.append(line)
+                                lines.append("\n回复序号或名称即可生成，也可以直接说「生成简历」等。")
+                                return "\n".join(lines)
+                except Exception:
+                    pass
             return "目标竞赛确定了。接下来想准备哪种材料？报名表、报名简历、计划书、PPT 或材料清单都可以。"
     if state["intent"] == "extract" and not state.get("notification_text"):
         return "好的，把竞赛通知全文粘贴过来就行，我会帮你整理关键信息和报名要求。"
@@ -1820,15 +1913,25 @@ def chat_submit(message, history, state):
 
     history.append({"role": "user", "content": message})
     main_agent = MainAgent(config=load_config())
-    control = main_agent.handle_conversation_control(message, state)
+    # 材料生成：state已就绪 或 当前消息是材料相关提问 → 跳过控制，进 MaterialAgent
+    wants_material_now = _detect_chat_intent(message, state.get("intent", "")) == "material"
+    skip_control = (
+        (state.get("intent") == "material"
+         and state.get("material_type")
+         and state.get("major")
+         and state.get("grade"))
+        or (wants_material_now and state.get("major") and state.get("grade"))
+    )
+    control = None if skip_control else main_agent.handle_conversation_control(message, state)
     if control:
         answer = control.get("data", {}).get("final_answer", control.get("message", ""))
         history.append({"role": "assistant", "content": answer})
         return "", history, state, build_status_html("success", control.get("message")), answer, [], control, _result_downloads(state.get("last_result", {}))
     followup = (
-        main_agent.handle_followup(message, state["last_result"], state)
-        if state.get("last_result")
-        else None
+        None if skip_control else
+        (main_agent.handle_followup(message, state["last_result"], state)
+         if state.get("last_result")
+         else None)
     )
     if followup:
         answer = followup.get("data", {}).get("final_answer", followup.get("message", ""))

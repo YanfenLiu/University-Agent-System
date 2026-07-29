@@ -271,68 +271,129 @@ class InfoExtractAgent:
 
         return True, ""
 
-    # ── 核心业务逻辑 ─────────────────────────────────────
+        # ── 核心业务逻辑 ─────────────────────────────────────
+
+    MAX_BATCH_SIZE = 20  # 单次批量抽取最大条数，防止 token 超限
 
     def process(self, input_data: dict) -> dict:
-        """批量优先 + 降级兜底：先用一次 LLM 调用抽取全部通知。
+        """智能提取：已有结构化数据的数据项跳过 LLM，仅对脏数据做 LLM 提取。
 
         流程：
-        1. 批量调用 LLM 一次性抽取所有 raw_items
-        2. validate 批量返回的每条结果，标记成功/失败
-        3. 批量中缺失/无效的条目 → 单独逐条补抽
-        4. 批量完全失败（网络/限流/解析失败）→ 全部降级逐条
+        1. 检查 API 是否可用，不可用则全部用缓存数据/回退（不调 LLM）
+        2. 遍历 raw_items，区分「已有结构化数据」与「需 LLM 提取」
+           - 已有 title+organizer 非空 → 直接 convert 为输出格式（跳过 LLM）
+           - 其余项 → 加入待提取队列
+        3. API 可用时：待提取队列分片批量调用 LLM（每片 ≤ MAX_BATCH_SIZE 条）
+        4. 批量失败或 API 不可用 → 用缓存已有的字段做 fallback
         """
         inner = input_data.get("input_data", {})
         raw_items = inner.get("raw_items", [])
         total = len(raw_items)
 
-        # ── 第一步：批量抽取 ──
-        batch_results, batch_ok = self._call_llm_batch_extract(raw_items)
+        api_available = not self._should_use_mock()
+        if not api_available:
+            print("[提取] API 未配置或不可用，跳过所有 LLM 调用，使用缓存数据")
+
         structured_items: list = [None] * total
-        retry_indices: list[int] = []
+        needs_llm_indices: list[int] = []
+        needs_llm_raw: list[dict] = []
 
-        if batch_ok and batch_results is not None:
-            for i, extracted in enumerate(batch_results):
-                if isinstance(extracted, dict):
-                    try:
-                        structured_items[i] = self._finalize_item(
-                            extracted, raw_items[i]
-                        )
-                    except Exception:
-                        retry_indices.append(i)
+        # ── 第一步：区分结构化与非结构化 ──
+        for i, item in enumerate(raw_items):
+            title = str(item.get("title", "") or "").strip()
+            organizer = str(item.get("organizer", "") or "").strip()
+            has_regist = bool(str(item.get("regist_start", "") or "").strip())
+
+            if title and (organizer or has_regist):
+                # 已有结构化数据 → 直接 convert
+                extracted = {
+                    "title": title,
+                    "deadline": item.get("regist_end", ""),
+                    "registration_time": item.get("regist_start", ""),
+                    "organizer": organizer,
+                    "summary": str(item.get("description", "") or title),
+                    "type": "其他",
+                    "reward": "unknown",
+                    "requirements": dict(self.FIELD_DEFAULTS["requirements"]),
+                    "source_url": item.get("url", ""),
+                }
+                structured_items[i] = self._finalize_item(extracted, item)
+                print(f"  [缓存直通] ({i+1}/{total}) {title[:50]} ...")
+            else:
+                needs_llm_indices.append(i)
+                needs_llm_raw.append(item)
+
+        # ── 第二步：对需要 LLM 提取的项做批量抽取 ──
+        if needs_llm_raw and api_available:
+            n = len(needs_llm_raw)
+            print(f"[提取] {n}/{total} 条需要 LLM 提取（最多分片 {self.MAX_BATCH_SIZE} 条/批）")
+
+            for chunk_start in range(0, n, self.MAX_BATCH_SIZE):
+                chunk_end = min(chunk_start + self.MAX_BATCH_SIZE, n)
+                chunk_items = needs_llm_raw[chunk_start:chunk_end]
+                chunk_indices = needs_llm_indices[chunk_start:chunk_end]
+
+                batch_results, batch_ok = self._call_llm_batch_extract(chunk_items)
+
+                if batch_ok and batch_results is not None:
+                    for offset, extracted in enumerate(batch_results):
+                        global_i = chunk_indices[offset]
+                        if isinstance(extracted, dict):
+                            try:
+                                structured_items[global_i] = self._finalize_item(
+                                    extracted, chunk_items[offset]
+                                )
+                            except Exception:
+                                self._use_cache_fallback(global_i, chunk_items[offset],
+                                                          raw_items, structured_items)
+                        else:
+                            self._use_cache_fallback(global_i, chunk_items[offset],
+                                                      raw_items, structured_items)
                 else:
-                    retry_indices.append(i)
-        else:
-            # 批量完全失败 → 全部降级逐条
-            retry_indices = list(range(total))
+                    # 本分片批量失败 → 用缓存字段兜底（不逐条调 LLM）
+                    for offset, global_i in enumerate(chunk_indices):
+                        self._use_cache_fallback(global_i, chunk_items[offset],
+                                                  raw_items, structured_items)
 
-        # ── 第二步：逐条补抽失败/缺失的条目 ──
-        for i in retry_indices:
-            raw_item = raw_items[i]
-            raw_text = raw_item.get("raw_text", "")
-            source_url = raw_item.get("url", raw_item.get("source_url", ""))
-            try:
-                print(
-                    f"[逐条补抽] ({i+1}/{total}) {raw_item.get('title','')[:50]} ..."
-                )
-                extracted = self._call_llm_extract(raw_text, source_url)
-                structured_items[i] = self._finalize_item(extracted, raw_item)
-            except KeyboardInterrupt:
-                print(f"\n[中断] 用户取消，剩余 {total - i} 条标记为 skipped。")
-                for j in range(i, total):
-                    if structured_items[j] is None:
-                        structured_items[j] = self._build_fallback_item(
-                            raw_items[j], "用户中断"
-                        )
-                        structured_items[j]["_extract_status"] = "skipped"
-                break
-            except Exception as e:
-                print(f"  [失败] {e}")
+        elif needs_llm_raw and not api_available:
+            # API 不可用，所有待提取项用缓存字段兜底
+            print(f"[提取] API 不可用，{len(needs_llm_raw)} 条待提取项使用缓存字段兜底")
+            for offset, global_i in enumerate(needs_llm_indices):
+                self._use_cache_fallback(global_i, needs_llm_raw[offset],
+                                          raw_items, structured_items)
+        else:
+            print(f"[提取] 全部 {total} 条自带结构化数据，跳过 LLM 提取")
+
+        # ── 第三步：确保无 None ──
+        for i in range(total):
+            if structured_items[i] is None:
                 structured_items[i] = self._build_fallback_item(
-                    raw_item, str(e)
+                    raw_items[i], "处理遗漏"
                 )
 
         return {"structured_items": structured_items}
+
+    def _use_cache_fallback(
+        self,
+        idx: int,
+        chunk_item: dict,
+        raw_items: list[dict],
+        structured_items: list,
+    ):
+        """使用缓存数据中的已有字段做 fallback，不调 LLM。"""
+        print(f"  [缓存兜底] ({idx+1}/? ) {chunk_item.get('title','')[:50]} ...")
+        extracted = {
+            "title": chunk_item.get("title", "") or "unknown",
+            "deadline": chunk_item.get("regist_end", "") or "unknown",
+            "registration_time": chunk_item.get("regist_start", "") or "unknown",
+            "organizer": chunk_item.get("organizer", "") or "unknown",
+            "summary": str(chunk_item.get("description", "") or chunk_item.get("title", "unknown")),
+            "type": "其他",
+            "reward": "unknown",
+            "requirements": dict(self.FIELD_DEFAULTS["requirements"]),
+            "source_url": chunk_item.get("url", ""),
+        }
+        structured_items[idx] = self._finalize_item(extracted, chunk_item)
 
     def _apply_source_fallbacks(self, extracted: dict, raw_item: dict) -> dict:
         """Keep trustworthy collector fields when LLM extraction is unavailable."""
@@ -563,26 +624,34 @@ class InfoExtractAgent:
         response_text = self._call_api(messages)
         return self._parse_llm_json(response_text)
 
+    def _should_use_mock(self) -> bool:
+        """检查 API 是否可用，不可用则回退 Mock 模式。"""
+        if not self._openai_available:
+            return True
+        llm_config = self.config.get("llm", {})
+        api_config = self.config.get("api", {})
+        api_key_env = llm_config.get("api_key_env", "DEEPSEEK_API_KEY")
+        api_key = api_config.get("key", "") or os.getenv(api_key_env, "")
+        base_url = api_config.get("base_url", "") or llm_config.get("base_url", "")
+        return not api_key or not base_url
+
     def _call_api(self, messages: list, max_tokens: int = 0) -> str:
         """
         调用 OpenAI 兼容 API，未配置时回退到 Mock 模式。
+        400 类客户端错误不重试（重试也无意义）。
         """
+        if self._should_use_mock():
+            return self._mock_extract(messages)
+
         llm_config = self.config.get("llm", {})
         model_config = self.config.get("model", {}) or llm_config
         api_config = self.config.get("api", {})
 
-        api_key_env = llm_config.get("api_key_env", "DEEPSEEK_API_KEY")
-        api_key = api_config.get("key", "") or os.getenv(api_key_env, "")
+        api_key = api_config.get("key", "") or os.getenv(llm_config.get("api_key_env", "DEEPSEEK_API_KEY"), "")
         base_url = api_config.get("base_url", "") or llm_config.get("base_url", "")
         model_name = model_config.get("name", "") or model_config.get("model", "")
         temperature = model_config.get("temperature", 0.3)
         resolved_max_tokens = max_tokens or model_config.get("max_tokens", 2048)
-
-        # 如果没有 openai 库或 API 未配置，回退到 Mock
-        if not self._openai_available:
-            return self._mock_extract(messages)
-        if not api_key or not base_url:
-            return self._mock_extract(messages)
 
         client_kwargs = {"api_key": api_key}
         if base_url:
@@ -610,7 +679,13 @@ class InfoExtractAgent:
                 raise
             except Exception as e:
                 last_error = e
-                print(f"  [API] 调用失败: {type(e).__name__}: {e}")
+                err_str = str(e)
+                print(f"  [API] 调用失败: {type(e).__name__}: {err_str[:120]}")
+                # 400 BadRequest / 401 Unauthorized / 404 NotFound → 不重试
+                if "400" in err_str or "401" in err_str or "404" in err_str:
+                    if attempt == 0:
+                        print(f"  [API] 客户端错误，不再重试")
+                    break
                 if attempt < max_retry - 1:
                     wait = 1 * (attempt + 1)
                     print(f"  [API] {wait}s 后重试...")
@@ -618,7 +693,7 @@ class InfoExtractAgent:
                 continue
 
         raise RuntimeError(
-            f"LLM API 调用失败（已重试 {max_retry} 次）: {last_error}"
+            f"LLM API 调用失败（{max_retry} 次）: {last_error}"
         )
 
     def _mock_extract(self, messages: list) -> str:
