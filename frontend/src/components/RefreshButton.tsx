@@ -45,7 +45,7 @@ export function RefreshButton({
     <Tooltip title="刷新竞赛数据">
       <Button
         type="default"
-        size="small"
+        size="middle"
         icon={<ReloadOutlined spin={isLoading} />}
         loading={isLoading}
         disabled={disabled || isLoading}
