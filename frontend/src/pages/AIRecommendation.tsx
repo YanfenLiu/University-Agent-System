@@ -121,9 +121,10 @@ export function AIRecommendation() {
             {/* 消息区域 */}
             <div
               ref={messagesContainerRef}
-              style={{
+                            style={{
                 flex: 1,
                 overflowY: "auto",
+                maxHeight: 420,
                 padding: "20px",
                 background: "#f8faff"
               }}
