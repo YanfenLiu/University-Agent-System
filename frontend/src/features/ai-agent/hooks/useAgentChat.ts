@@ -133,6 +133,16 @@ export function useAgentChat() {
         setStateSnapshot({});
         setMessages([{ role: "assistant", content: WELCOME_MESSAGE }]);
         setShowSuggestions(true);
+        setAgentSteps([
+          { label: "等待用户输入", status: "wait", detail: "请描述你的背景和需求" },
+          { label: "分析用户画像", status: "wait", detail: "" },
+          { label: "匹配竞赛数据库", status: "wait", detail: "" },
+          { label: "评估匹配程度", status: "wait", detail: "" },
+          { label: "生成推荐方案", status: "wait", detail: "" },
+        ]);
+        setLoading(false);
+        setTimeout(() => inputRef.current?.focus(), 100);
+        return;
       } else {
         setStateSnapshot(result.state_snapshot);
         setMessages((prev) => [
@@ -146,13 +156,28 @@ export function useAgentChat() {
       }
 
       updateAgentStep(1, "done", "MainAgent 已完成语义理解");
-      updateAgentStep(
-        2,
-        "done",
-        result.response.type === "result" ? "已调用推荐流程" : "本轮无需检索",
-      );
-      updateAgentStep(3, "done", "对话状态已更新");
-      updateAgentStep(4, "done", "回复已生成");
+
+      const responseType = result.response.type;
+      const hasRecommendations =
+        Array.isArray(result.response.recommendations) &&
+        result.response.recommendations.length > 0;
+
+      if (responseType === "result" || hasRecommendations) {
+        // 后端真正执行了推荐流程，有推荐结果
+        updateAgentStep(2, "done", "已匹配到符合条件的竞赛数据");
+        updateAgentStep(3, "done", "已完成多维度匹配评估");
+        updateAgentStep(4, "done", "已生成个性化推荐方案");
+      } else if (responseType === "need_input") {
+        // 后端仍在收集用户信息，尚未执行推荐
+        updateAgentStep(2, "wait", "等待信息收集完成后再检索");
+        updateAgentStep(3, "wait", "");
+        updateAgentStep(4, "wait", "");
+      } else {
+        // 一般性回复（agent/error），未触发推荐
+        updateAgentStep(2, "wait", "本轮无需检索");
+        updateAgentStep(3, "wait", "");
+        updateAgentStep(4, "wait", "");
+      }
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -162,9 +187,9 @@ export function useAgentChat() {
         },
       ]);
       updateAgentStep(1, "done", "连接失败");
-      updateAgentStep(2, "done", "未执行检索");
-      updateAgentStep(3, "done", "原状态已保留");
-      updateAgentStep(4, "done", "已明确提示错误");
+      updateAgentStep(2, "wait", "未执行检索");
+      updateAgentStep(3, "wait", "");
+      updateAgentStep(4, "wait", "未生成推荐");
     }
 
     setLoading(false);
