@@ -63,7 +63,7 @@ export function AIRecommendation() {
       </div>
 
             {/* 主区域：左右两列等高 */}
-      <Row gutter={24} style={{ height: "calc(100vh - 260px)", minHeight: 520, maxHeight: 650 }}>
+            <Row gutter={24} style={{ height: 580 }}>
         {/* 左侧：对话区 */}
         <Col xs={24} md={16}>
                     <div
