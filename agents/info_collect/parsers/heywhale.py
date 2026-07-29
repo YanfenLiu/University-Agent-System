@@ -62,7 +62,7 @@ class HeywhaleParser(BaseParser):
         cid = item.get("_id", "")
         return {
             "title": item.get("Name", ""),
-            "url": f"{DETAIL_BASE}/competition/{cid}",
+            "url": f"{DETAIL_BASE}/about/competition/{cid}",
             "source": "heywhale",
             "raw_text": json.dumps(item, ensure_ascii=False),
             "publish_date": _fmt_iso(item.get("StartDate")),

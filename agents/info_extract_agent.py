@@ -383,6 +383,8 @@ class InfoExtractAgent:
             title = item.get("title", "") or "未知项目"
             url = item.get("url", item.get("source_url", ""))
             raw_text = item.get("raw_text", "")
+            # 正文截断：10 条 × 3000 字符 ≈ 3 万 tokens，远低于 1M 上限
+            raw_text = raw_text[:3000]
             parts.append(
                 f"--- 第{i}条 ---\n"
                 f"标题：{title}\n"
@@ -549,7 +551,7 @@ class InfoExtractAgent:
             RuntimeError: API 调用失败
         """
         user_prompt = self.user_template.format(
-            raw_text=raw_text,
+            raw_text=raw_text[:4000],
             source_url=source_url,
         )
 

@@ -1009,6 +1009,13 @@ If no agent is needed, selected_agents must be empty.
     def _adapt_info_collect_input(self, original_input: dict[str, Any]) -> dict[str, Any]:
         """Map the web form fields to InfoCollectAgent without changing its API."""
         payload = dict(original_input.get("input_data", {}))
+
+        # MainAgent 统一控制 embedding 返回条数，优先取 recommendation.top_n
+        if "max_results" not in payload:
+            rec_cfg = self.config.get("recommendation", {}) if isinstance(self.config, dict) else {}
+            info_cfg = self.config.get("info_collect", {}) if isinstance(self.config, dict) else {}
+            payload["max_results"] = rec_cfg.get("recommendation_pool_size") or info_cfg.get("max_results") or 10
+
         if payload.get("sources"):
             return payload
 

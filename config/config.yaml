@@ -8,8 +8,7 @@
   timeout: 30
 
 info_collect:
-  max_results: 10             # 每次采集目标数量
-  cache_max_age_hours: 24     # 数据库有效期（小时），超时后重新爬取
+  max_results: 10              # 每次采集目标数量（与 recommendation.top_n 一致）
   request_delay_min: 0.5      # 翻页请求间隔最小值（秒）
   request_delay_max: 1.5      # 翻页请求间隔最大值（秒）
   max_pages: 3                # 每个数据源最大翻页数（首次全量可调大）
