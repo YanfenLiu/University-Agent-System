@@ -41,3 +41,70 @@ body { margin: 0; }
   0% { background-position: 0% 50%; }
   100% { background-position: 300% 50%; }
 }
+
+/* ========== 工作流动画 ========== */
+
+/* 节点脉冲 */
+@keyframes nodePulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.8;
+    box-shadow: 0 0 8px rgba(96,165,250,0.3);
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 1;
+    box-shadow: 0 0 20px rgba(96,165,250,0.6);
+  }
+}
+
+/* Hero 光晕呼吸 */
+@keyframes glowPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
+
+/* 节点滑入 */
+@keyframes slideInNode {
+  0% {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* 连接线流光 */
+@keyframes flowLine {
+  0% {
+    background-position: 0% 0%;
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    background-position: 0% 100%;
+    opacity: 0.3;
+  }
+}
+
+/* 强化转圈 */
+@keyframes spinnerRotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* 状态文字闪烁 */
+@keyframes textBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
