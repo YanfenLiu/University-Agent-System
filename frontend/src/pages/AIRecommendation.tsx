@@ -95,7 +95,7 @@ export function AIRecommendation() {
                     width: 32,
                     height: 32,
                     borderRadius: 8,
-                    background: `linear-gradient(135deg, ${colorPrimary}, #4096ff)`,
+                    background: linear-gradient(135deg, , #4096ff),
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center"
@@ -125,7 +125,8 @@ export function AIRecommendation() {
                               flex: 1,
                               overflowY: "auto",
                               padding: "20px",
-                              background: "#f8faff"
+                              background: "#f8faff",
+                              maxHeight: "calc(100vh - 340px)"
                             }}
             >
               <ChatSuggestions
@@ -181,7 +182,7 @@ export function AIRecommendation() {
 
         {/* 右侧：Agent 状态 + 用户画像 */}
         <Col xs={24} md={8}>
-          <div
+                    <div
             style={{
               height: "100%",
               display: "flex",
@@ -215,7 +216,7 @@ export function AIRecommendation() {
             </Typography.Title>
             <Typography.Text type="secondary" style={{ fontSize: 13 }}>
               {userProfile.matched
-                ? `基于你的背景（${[userProfile.major, ...userProfile.interests].filter(Boolean).join("、")}），已为你筛选出最契合的竞赛`
+                ? 基于你的背景（），已为你筛选出最契合的竞赛
                 : "完成对话后，AI将根据你的情况推荐最适合的竞赛"}
             </Typography.Text>
           </div>
@@ -243,7 +244,7 @@ export function AIRecommendation() {
                     top: -6,
                     right: -6,
                     zIndex: 10,
-                    background: `linear-gradient(135deg, ${colorPrimary}, #4096ff)`,
+                    background: linear-gradient(135deg, , #4096ff),
                     color: "#fff",
                     fontSize: 11,
                     padding: "2px 10px",
