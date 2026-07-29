@@ -2,6 +2,7 @@
 export type Message = {
   role: "user" | "assistant";
   content: string;
+  files?: string[];
 };
 
 /** Agent 工作流步骤 */
@@ -35,8 +36,8 @@ export interface AgentResponse {
   session_id: string;
   response: {
     text: string;
-    type: "agent" | "error" | "need_input" | "result";
-    files: unknown[];
+    type: "agent" | "error" | "need_input" | "result" | "reset";
+    files: string[];
     recommendations: unknown[];
   };
   state_snapshot: Record<string, unknown>;

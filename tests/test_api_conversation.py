@@ -1,60 +1,331 @@
-from api import (
-    _context_recommendations,
-    _material_project_info,
-    _resolve_api_task_type,
-    _select_context_recommendation,
-)
+from __future__ import annotations
+
+from agents.main_agent import MainAgent
+import api
 
 
-def test_pages_full_process_defaults_to_recommendation():
-    assert _resolve_api_task_type("full_process", "推荐几个AI比赛", None) == "recommendation"
+def _agent() -> MainAgent:
+    agent = object.__new__(MainAgent)
+    agent.config = {}
+    agent.sub_agents = {}
+    return agent
 
 
-def test_material_request_does_not_run_full_process_again():
+def _understanding(**overrides):
+    value = {
+        "intent": "",
+        "input_role": "user_profile",
+        "dialogue_action": "continue",
+        "response_mode": "ask_clarification",
+        "recommendation_options": {},
+        "major": "",
+        "grade": "",
+        "skills_add": [],
+        "skills_remove": [],
+        "skills_status": "unknown",
+        "competition_type": "",
+        "competition_type_status": "unknown",
+        "competition_scope": "unknown",
+        "excluded_competition_types": [],
+        "competition_level": "",
+        "competition_level_status": "unknown",
+        "preferred_levels": [],
+        "acceptable_levels": [],
+        "excluded_levels": [],
+        "development_goals": [],
+        "available_time_per_week": None,
+        "team_preference": "",
+        "selected_recommendation": {},
+        "material_type": "",
+        "corrected_fields": [],
+        "acknowledgement": "明白了",
+        "reply_target": "",
+        "reply_text": "",
+    }
+    value.update(overrides)
+    return value
+
+
+def _recommendation_result():
+    recommendation = {
+        "title": "人工智能挑战赛",
+        "summary": "面向高校学生的人工智能应用竞赛",
+        "source_url": "https://example.com",
+    }
+    return {
+        "status": "success",
+        "message": "ok",
+        "data": {
+            "final_answer": "推荐完成。",
+            "agent_results": [
+                {
+                    "agent_name": "RecommendationAgent",
+                    "status": "success",
+                    "data": {"recommendations": [recommendation]},
+                }
+            ],
+        },
+    }
+
+
+def test_llm_unavailable_is_explicit_and_preserves_state(monkeypatch):
+    agent = _agent()
+    state = agent.new_conversation_state()
+    state["major"] = "人工智能"
+    monkeypatch.setattr(agent, "understand_conversation_turn", lambda *_: None)
+
+    result = agent.run_conversation_turn("帮我推荐比赛", state)
+
+    assert result["success"] is False
+    assert "AI理解服务暂时不可用" in result["response"]["text"]
+    assert result["state_snapshot"]["major"] == "人工智能"
+
+
+def test_reset_all_does_not_call_llm(monkeypatch):
+    agent = _agent()
+    state = agent.new_conversation_state()
+    state["major"] = "软件工程"
+
+    def fail_if_called(*_):
+        raise AssertionError("reset must not call LLM")
+
+    monkeypatch.setattr(agent, "understand_conversation_turn", fail_if_called)
+    result = agent.run_conversation_turn("重置所有", state)
+
+    assert result["metadata"]["reset"] is True
+    assert result["response"]["type"] == "reset"
+    assert result["state_snapshot"]["major"] == ""
+
+
+def test_profile_collection_is_one_topic_per_turn(monkeypatch):
+    agent = _agent()
+    turns = iter(
+        [
+            _understanding(
+                intent="recommendation",
+                major="计算机科学与技术",
+                grade="大二",
+            ),
+            _understanding(
+                intent="recommendation",
+                competition_type_status="no_preference",
+            ),
+            _understanding(
+                intent="recommendation",
+                skills_status="no_preference",
+            ),
+            _understanding(
+                intent="recommendation",
+                competition_level_status="no_preference",
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        agent,
+        "understand_conversation_turn",
+        lambda *_: next(turns),
+    )
+    captured = {}
+
+    def fake_run(payload):
+        captured.update(payload)
+        return _recommendation_result()
+
+    monkeypatch.setattr(agent, "run", fake_run)
+
+    first = agent.run_conversation_turn("我是计算机专业大二", {})
+    assert "竞赛方向" in first["response"]["text"]
+
+    second = agent.run_conversation_turn("方向都可以", first["state_snapshot"])
+    assert "技能" in second["response"]["text"]
+
+    third = agent.run_conversation_turn(
+        "暂时没有特别擅长",
+        second["state_snapshot"],
+    )
+    assert "校级" in third["response"]["text"]
+
+    fourth = agent.run_conversation_turn(
+        "级别不限",
+        third["state_snapshot"],
+    )
+    assert fourth["response"]["type"] == "result"
+    assert captured["task_type"] == "recommendation"
+    assert captured["task_type"] != "full_process"
     assert (
-        _resolve_api_task_type(
-            "full_process",
-            "能否帮我生成AI推荐的材料呢？",
-            {"intent": "material"},
-        )
-        == "material"
+        fourth["state_snapshot"]["last_recommendations"][0]["title"]
+        == "人工智能挑战赛"
     )
 
 
-def test_material_keyword_fallback_works_without_llm():
-    assert _resolve_api_task_type("full_process", "帮我写申报书", None) == "material"
+def test_matching_semantic_question_is_used(monkeypatch):
+    agent = _agent()
+    monkeypatch.setattr(
+        agent,
+        "understand_conversation_turn",
+        lambda *_: _understanding(
+            intent="recommendation",
+            major="人工智能",
+            grade="大二",
+            reply_target="collect_competition_type",
+            reply_text=(
+                "人工智能专业可以选择的赛道很多。"
+                "你更想尝试计算机视觉、智能机器人，还是其他方向？"
+            ),
+        ),
+    )
+
+    result = agent.run_conversation_turn("我是人工智能专业大二学生", {})
+
+    assert "计算机视觉" in result["response"]["text"]
+    assert result["state_snapshot"]["pending_action"] == "collect_competition_type"
 
 
-def test_prior_recommendation_can_be_selected_by_ordinal():
-    recommendations = [
-        {"name": "人工智能挑战赛", "officialUrl": "https://example.com/1"},
-        {"name": "数学建模竞赛", "officialUrl": "https://example.com/2"},
-    ]
-    selected = _select_context_recommendation("给第二个生成材料", recommendations)
-    assert selected == recommendations[1]
+def test_mismatched_semantic_question_falls_back_to_safe_template(monkeypatch):
+    agent = _agent()
+    monkeypatch.setattr(
+        agent,
+        "understand_conversation_turn",
+        lambda *_: _understanding(
+            intent="recommendation",
+            major="人工智能",
+            grade="大二",
+            reply_target="collect_skills",
+            reply_text="我已经替你推荐好了三个比赛。",
+        ),
+    )
+
+    result = agent.run_conversation_turn("我是人工智能专业大二学生", {})
+
+    assert "竞赛方向" in result["response"]["text"]
+    assert "推荐好了" not in result["response"]["text"]
 
 
-def test_prior_recommendation_can_be_selected_by_title():
-    recommendations = [
-        {"name": "人工智能挑战赛"},
-        {"name": "数学建模竞赛"},
-    ]
-    selected = _select_context_recommendation("为数学建模竞赛准备材料", recommendations)
-    assert selected == recommendations[1]
-
-
-def test_pages_recommendation_shape_maps_to_material_project():
-    project = _material_project_info(
+def test_material_flow_selects_project_then_type(monkeypatch):
+    agent = _agent()
+    state = agent.new_conversation_state()
+    state.update(
         {
-            "name": "人工智能挑战赛",
-            "summary": "面向高校学生",
-            "officialUrl": "https://example.com",
+            "major": "人工智能",
+            "grade": "大二",
+            "intent": "recommendation",
+            "last_recommendations": [
+                {"title": "人工智能挑战赛", "summary": "AI应用"},
+                {"title": "数学建模竞赛", "summary": "建模"},
+            ],
         }
     )
-    assert project["title"] == "人工智能挑战赛"
-    assert project["source_url"] == "https://example.com"
+    turns = iter(
+        [
+            _understanding(
+                intent="material",
+                input_role="command",
+                dialogue_action="generate_material",
+            ),
+            _understanding(
+                intent="material",
+                input_role="followup",
+                dialogue_action="generate_material",
+                selected_recommendation={"index": 2, "title": ""},
+            ),
+            _understanding(
+                intent="material",
+                input_role="followup",
+                dialogue_action="generate_material",
+                selected_recommendation={"index": 2, "title": ""},
+                material_type="generic_application_form",
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        agent,
+        "understand_conversation_turn",
+        lambda *_: next(turns),
+    )
+    captured = {}
+
+    def fake_run(payload):
+        captured.update(payload)
+        return {
+            "status": "success",
+            "message": "材料完成",
+            "data": {"final_answer": "申报书已生成。", "agent_results": []},
+        }
+
+    monkeypatch.setattr(agent, "run", fake_run)
+
+    first = agent.run_conversation_turn("帮我准备相关材料", state)
+    assert "哪一个竞赛" in first["response"]["text"]
+
+    second = agent.run_conversation_turn("第二个", first["state_snapshot"])
+    assert "哪种材料" in second["response"]["text"]
+    assert second["state_snapshot"]["project_name"] == "数学建模竞赛"
+
+    third = agent.run_conversation_turn("生成申报书", second["state_snapshot"])
+    assert third["response"]["text"] == "申报书已生成。"
+    assert captured["task_type"] == "material"
+    assert captured["input_data"]["project_info"]["title"] == "数学建模竞赛"
 
 
-def test_invalid_context_recommendations_are_ignored():
-    context = {"last_recommendations": ["bad", {"name": "有效竞赛"}]}
-    assert _context_recommendations(context) == [{"name": "有效竞赛"}]
+def test_profile_change_invalidates_old_recommendations():
+    agent = _agent()
+    state = agent.new_conversation_state()
+    state.update(
+        {
+            "major": "计算机科学与技术",
+            "grade": "大二",
+            "last_recommendations": [{"title": "旧推荐"}],
+            "last_result": _recommendation_result(),
+        }
+    )
+
+    updated = agent._apply_conversation_understanding(
+        state,
+        "我其实是人工智能专业",
+        _understanding(
+            intent="recommendation",
+            dialogue_action="profile_change",
+            major="人工智能",
+            corrected_fields=["major"],
+        ),
+    )
+
+    assert updated["major"] == "人工智能"
+    assert updated["last_recommendations"] == []
+    assert updated["last_result"] == {}
+
+
+def test_api_is_a_thin_main_agent_adapter(monkeypatch):
+    captured = {}
+
+    class FakeMainAgent:
+        def __init__(self, config):
+            captured["config"] = config
+
+        def run_conversation_turn(self, text, state):
+            captured["text"] = text
+            captured["state"] = state
+            return {
+                "success": True,
+                "response": {
+                    "text": "下一问",
+                    "type": "need_input",
+                    "files": [],
+                    "recommendations": [],
+                },
+                "state_snapshot": {"major": "人工智能"},
+                "metadata": {"status": "success", "reset": False},
+            }
+
+    monkeypatch.setattr(api, "MainAgent", FakeMainAgent)
+    monkeypatch.setattr(api, "load_config", lambda: {"llm": {"enabled": True}})
+    request = api.AgentRunRequest(
+        user_input="我是人工智能专业",
+        state_snapshot={"grade": "大二"},
+    )
+
+    response = api.run_agent(request)
+
+    assert captured["text"] == "我是人工智能专业"
+    assert captured["state"] == {"grade": "大二"}
+    assert response.state_snapshot == {"major": "人工智能"}
