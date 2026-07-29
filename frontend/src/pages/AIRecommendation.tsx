@@ -63,7 +63,7 @@ export function AIRecommendation() {
       </div>
 
             {/* 主区域：左右两列等高 */}
-            <Row gutter={24} style={{ minHeight: 480 }}>
+            <Row gutter={24} style={{ height: "calc(100vh - 210px)", overflow: "hidden" }}>
         {/* 左侧：对话区 */}
         <Col xs={24} md={16}>
                     <div
@@ -144,7 +144,7 @@ export function AIRecommendation() {
             </div>
 
             {/* 输入区域 */}
-            <div style={{ padding: "10px 20px 4px", borderTop: "1px solid rgba(15, 23, 42, 0.06)", background: "#fff" }}>
+            <div style={{ padding: "10px 20px 12px", borderTop: "1px solid rgba(15, 23, 42, 0.06)", background: "#fff" }}>
               <Input.TextArea
                 ref={inputRef}
                 value={input}
