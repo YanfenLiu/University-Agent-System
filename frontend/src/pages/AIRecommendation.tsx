@@ -62,14 +62,13 @@ export function AIRecommendation() {
         </Typography.Text>
       </div>
 
-      {/* 主区域：左右两列等高 */}
-      <Row gutter={24} style={{ minHeight: 580 }}>
+            {/* 主区域：左右两列等高 */}
+            <Row gutter={24} style={{ minHeight: 580 }}>
         {/* 左侧：对话区 */}
         <Col xs={24} md={16}>
                     <div
-            style={{
+                        style={{
               height: "100%",
-              maxHeight: "620px",
               display: "flex",
               flexDirection: "column",
               background: "#fff",
@@ -205,7 +204,8 @@ export function AIRecommendation() {
         </Col>
       </Row>
 
-      {/* 推荐竞赛方案区域 */}
+            {/* 推荐竞赛方案区域 - 有推荐时才显示 */}
+      {recommendedCompetitions.length > 0 && (
       <Card
         title={
           <div>
@@ -264,8 +264,9 @@ export function AIRecommendation() {
               />
             </div>
           ))}
-        </div>
+                </div>
       </Card>
+      )}
     </Space>
   );
 }
