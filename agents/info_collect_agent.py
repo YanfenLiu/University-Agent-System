@@ -2,8 +2,8 @@
 
 import os
 import logging
-import threading
-from datetime import datetime, timezone
+
+from datetime import datetime
 from typing import Any
 
 import yaml
@@ -40,45 +40,6 @@ class InfoCollectAgent:
             self._crawler = Crawler(self.config, self._get_storage())
         return self._crawler
 
-    def _start_background_crawl(
-        self, keywords: list[str], sources: list[str], task_id: str, config: dict,
-    ):
-        """在后台线程异步爬取过期源，不阻塞当前请求。"""
-        # 复用当前连接的 storage，避免重新解析 ${VAR} 配置
-        storage = self._get_storage()
-
-        def _bg():
-            logger.info("后台刷新开始: %s", sources)
-            crawler = Crawler(config, storage)
-            log_id = storage.start_crawl_log(task_id + "_bg", ",".join(sources))
-            try:
-                max_pages = config.get("info_collect", {}).get("max_pages", 3)
-                _, wstats = crawler.crawl([], sources, max_pages, log_id)
-                storage.update_crawl_log(
-                    log_id,
-                    pages_crawled=wstats.get("pages_crawled", 0),
-                    items_found=wstats.get("items_found", 0),
-                    items_new=wstats.get("items_new", 0),
-                    items_updated=wstats.get("items_updated", 0),
-                    status="completed",
-                    finished_at=datetime.now().isoformat(),
-                )
-                logger.info(
-                    "后台刷新完成: %s, 新增 %d, 更新 %d",
-                    sources, wstats.get("items_new", 0), wstats.get("items_updated", 0),
-                )
-            except Exception as e:
-                logger.warning("后台刷新失败: %s", e)
-            finally:
-                try:
-                    crawler.close()
-                except Exception:
-                    pass
-
-        t = threading.Thread(target=_bg, daemon=False)
-        t.start()
-        logger.info("已启动后台刷新线程: %s", sources)
-
     @staticmethod
     def _build_raw_items(all_items: list[dict]) -> list[dict]:
         return [
@@ -106,33 +67,6 @@ class InfoCollectAgent:
             }
             for it in all_items
         ]
-
-    @staticmethod
-    def _newest_age_hours(items: list[dict]) -> float:
-        if not items:
-            return float("inf")
-        newest: datetime | None = None
-        for item in items:
-            raw = str(item.get("updated_at", "")).strip()
-            if not raw:
-                raw = str(item.get("collected_at", "")).strip()
-            if not raw:
-                continue
-            try:
-                if raw.endswith("Z"):
-                    raw = raw[:-1] + "+00:00"
-                elif "+" not in raw and raw.count("-") > 2:
-                    raw += "+00:00"
-                dt = datetime.fromisoformat(raw)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                if newest is None or dt > newest:
-                    newest = dt
-            except (ValueError, TypeError):
-                continue
-        if newest is None:
-            return float("inf")
-        return (datetime.now(timezone.utc) - newest).total_seconds() / 3600
 
     # ---- 统一接口 ----
 
@@ -231,21 +165,10 @@ class InfoCollectAgent:
         user_input = input_data.get("user_input", "")
         profile = input_data.get("user_profile", {})
 
-        intent_parts = []
-        if keywords:
-            intent_parts.append(" ".join(keywords))
-        if user_input and user_input.strip():
-            intent_parts.append(user_input.strip())
-        grade = (profile.get("grade") or "").strip()
-        if grade:
-            intent_parts.append("年级: " + grade)
-        major = (profile.get("major") or "").strip()
-        if major:
-            intent_parts.append("专业: " + major)
-        interests = profile.get("interests", [])
-        if interests:
-            intent_parts.append("兴趣: " + ", ".join(interests))
-        user_intent = "; ".join(intent_parts) if intent_parts else ""
+        # embedding 粗筛仅用竞赛方向。profile 留给 recommendation agent 精排。
+        user_intent = user_input.strip() if (user_input and user_input.strip()) else ""
+        if not user_intent and keywords:
+            user_intent = " ".join(keywords)
 
         storage = self._get_storage()
         all_items = []
@@ -257,78 +180,36 @@ class InfoCollectAgent:
         if web_srcs:
             info_cfg = self.config.get("info_collect", {}) if isinstance(self.config, dict) else {}
             max_results = inner.get("max_results") or info_cfg.get("max_results", 10)
-            cache_max_age_hours = info_cfg.get("cache_max_age_hours", 24)
 
             cached_all = storage.get_all_items()
+            all_stats["web"] = {
+                "pages_crawled": 0, "items_found": 0,
+                "items_new": 0, "items_updated": 0,
+                "cache_hits": len(cached_all),
+            }
 
-            # 按源检查：完全没数据 → 同步爬取（必须等）；过期 → 后台刷新
-            missing_srcs = []
-            stale_srcs = []
-            for src in web_srcs:
-                src_items = [it for it in cached_all if it.get("source") == src]
-                if not src_items:
-                    missing_srcs.append(src)
-                else:
-                    age = self._newest_age_hours(src_items)
-                    if age > cache_max_age_hours:
-                        stale_srcs.append(src)
-                        logger.info("%s 过期 (%.1fh > %dh), 后台刷新", src, age, cache_max_age_hours)
-                    else:
-                        logger.info("%s 新鲜 (%d 条, %.1fh)", src, len(src_items), age)
+            # 过滤已过期竞赛 + 本地语义搜索（embedding → TF-IDF，不调 LLM）
+            from .info_collect.supabase_store import SupabaseStore
+            active = SupabaseStore.filter_active(cached_all)
+            logger.info("过滤过期: %d → %d 条有效", len(cached_all), len(active))
 
-            # 缺失源 → 同步爬取（数据都没有，必须等）
-            if missing_srcs:
-                logger.info("缺失数据源，同步爬取: %s", missing_srcs)
-                max_pages_per_source = info_cfg.get("max_pages", 10)
-                crawler = self._get_crawler()
-                log_id = storage.start_crawl_log(task_id, ",".join(missing_srcs))
-                try:
-                    _, wstats = crawler.crawl(keywords, missing_srcs, max_pages_per_source, log_id)
-                finally:
-                    try: crawler.close()
-                    except Exception: pass
-                storage.update_crawl_log(
-                    log_id,
-                    pages_crawled=wstats.get("pages_crawled", 0),
-                    items_found=wstats.get("items_found", 0),
-                    items_new=wstats.get("items_new", 0),
-                    items_updated=wstats.get("items_updated", 0),
-                    status="completed",
-                    finished_at=datetime.now().isoformat(),
-                )
-                cached_all = storage.get_all_items()
-                all_stats["web"] = wstats
+            # keywords 驱动爬虫，不应混入语义排序。
+            # user_intent 已包含 keywords 原文 + user_input + profile，足够语义匹配。
+            if hasattr(storage, "search_semantic_local") and user_intent:
+                print(f"[info_collect] 语义搜索 intent='{user_intent[:60]}' candidates={len(active)}", flush=True)
+                matched = storage.search_semantic_local(active, user_intent, limit=max_results)
+                # embedding 返回的是轻量字段，按 ID 补全 raw_text/url 等完整信息
+                if matched and hasattr(storage, "get_full_items_by_ids"):
+                    id_map = {it["id"]: it for it in storage.get_full_items_by_ids(
+                        [it["id"] for it in matched]
+                    )}
+                    matched = [id_map.get(it["id"], it) for it in matched]
             else:
-                all_stats["web"] = {
-                    "pages_crawled": 0, "items_found": 0,
-                    "items_new": 0, "items_updated": 0,
-                    "cache_hits": len(cached_all),
-                }
-
-            # 过期源 → 后台线程异步刷新，不阻塞用户
-            if stale_srcs:
-                self._start_background_crawl(keywords, stale_srcs, task_id, self.config)
-
-                        # 语义搜索或关键词匹配 — 限制返回条数，避免下游处理271条全量数据
-            if hasattr(storage, "search_semantic") and user_intent:
-                logger.info("语义搜索: '%s'", user_intent[:80])
-                matched = storage.search_semantic(user_intent, limit=max_results)
-            elif keywords:
-                # 本地 JSON 存储无语义搜索能力，用关键词匹配 title/description/organizer
-                logger.info("关键词匹配: %s (上限 %d 条)", keywords, max_results)
-                matched = storage.search(keywords, limit=max_results)
-                if not matched and user_intent:
-                    # 关键词未匹配 → 用最新 max_results 条兜底
-                    logger.info("关键词无匹配，取最新 %d 条", max_results)
-                    all_sorted = sorted(cached_all, key=lambda x: x.get('collected_at', ''), reverse=True)
-                    matched = all_sorted[:max_results]
-            else:
-                # 没有关键词也没有意图 → 取最新 max_results 条
-                logger.info("无搜索意图，取最新 %d 条", max_results)
-                all_sorted = sorted(cached_all, key=lambda x: x.get('collected_at', ''), reverse=True)
-                matched = all_sorted[:max_results]
+                print(f"[info_collect] 语义搜索 SKIPPED (has_search={hasattr(storage, 'search_semantic_local')} intent='{user_intent[:40] if user_intent else '(empty)'}')", flush=True)
+                matched = active[:max_results]
             all_items.extend(matched)
             all_stats["web"]["matched"] = len(matched)
+            all_stats["web"]["active_count"] = len(active)
 
         # 本地文件解析
         if "local_file" in sources:

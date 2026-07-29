@@ -1253,6 +1253,11 @@ def _update_chat_state(
         "机器学习": "人工智能", "深度学习": "人工智能", "数学建模": "数学建模",
         "营销策划": "商业与营销", "市场营销": "商业与营销", "控制类": "自动化与控制",
         "电子设计": "电子设计", "机器人": "机器人", "后端开发": "软件开发",
+        "金融": "金融", "经济": "经济", "金融科技": "金融科技",
+        "英语": "英语", "外语": "外语", "翻译": "外语",
+        "医学": "医学", "生物": "生物", "化学": "化学", "物理": "物理",
+        "文学": "文学", "艺术": "艺术", "设计": "设计", "建筑": "建筑",
+        "环保": "环保", "能源": "能源", "新能源": "新能源",
     }
     # 有 LLM：词库只补空，或在明确纠错措辞下打草稿（最终由 LLM 非空值覆盖）
     # 无 LLM：允许词库补空与纠错回退
@@ -1823,9 +1828,16 @@ def _chat_standard_input(state: dict[str, Any], message: str) -> dict:
                 }
                 break
 
+    # user_input 必须是用户的竞赛方向，而非聊天最后一条消息。
+    # 多轮对话中最后一条消息通常是 profile 补全答案（如"没有擅长的"），
+    # 原始竞赛意图已存入 state["competition_type"]。
+    competition_direction = (state.get("competition_type") or "").strip()
+    user_input_for_agent = competition_direction if competition_direction else message
+    print(f"[_chat_standard_input] competition_type='{competition_direction}' → user_input='{user_input_for_agent[:60]}'", flush=True)
+
     return {
         "task_id": f"chat_task_{uuid4().hex[:8]}",
-        "user_input": message,
+        "user_input": user_input_for_agent,
         "task_type": task_type,
         "user_profile": profile,
         "context": {

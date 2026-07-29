@@ -35,6 +35,34 @@ class Crawler:
     def close(self):
         self._closed = True
 
+    # 关键词 → 标题中可能出现的等价表述（供检索阶段 TF-IDF 扩展用）
+    _KEYWORD_ALIASES: dict[str, list[str]] = {
+        "人工智能": ["ai", "agent", "llm", "机器学习", "深度学习", "计算机视觉", "nlp", "自然语言处理"],
+        "数据分析": ["数据挖掘", "大数据", "data"],
+        "软件开发": ["编程", "coding", "hackathon", "黑客松", "程序设计", "hack"],
+        "创新创业": ["创业", "创新", "startup", "商业"],
+        "算法": ["算法赛", "algorithm", "程序", "acm"],
+        "数学建模": ["数学", "建模", "math"],
+        "机器人": ["robot", "ros", "无人", "自动化"],
+        "电子设计": ["电子", "硬件", "嵌入式", "iot", "物联网", "stm32"],
+        "自动化": ["控制", "pid", "plc"],
+        "市场营销": ["营销", "商业策划", "策划"],
+        "网络安全": ["安全", "ctf", "攻防", "security"],
+    }
+
+    @classmethod
+    def _expand_keywords(cls, keywords: list[str]) -> list[str]:
+        """Expand user keywords with known aliases for broader matching."""
+        expanded = list(keywords)
+        for kw in keywords:
+            lower_kw = kw.lower()
+            for base, aliases in cls._KEYWORD_ALIASES.items():
+                if lower_kw == base.lower() or lower_kw in [a.lower() for a in aliases]:
+                    expanded.extend(aliases)
+                    if base.lower() not in [e.lower() for e in expanded]:
+                        expanded.append(base)
+        return expanded
+
     def _random_delay(self):
         time.sleep(random.uniform(self.delay_min, self.delay_max))
 
@@ -48,14 +76,26 @@ class Crawler:
         """全量采集：遍历 sources，所有条目不做过滤直接入库。"""
         all_items = []
         seen_urls = set()
-        stats = {"pages_crawled": 0, "items_found": 0, "items_new": 0, "items_updated": 0}
+        stats = {"pages_crawled": 0, "items_found": 0, "items_new": 0, "items_updated": 0, "items_expired": 0}
         elapsed_start = time.monotonic()
+
+        def _is_expired(item: dict) -> bool:
+            end_str = str(item.get("contest_end", "")).strip()
+            if not end_str:
+                return False
+            try:
+                from datetime import date as _date
+                return _date.fromisoformat(end_str[:10]) < _date.today()
+            except (ValueError, TypeError):
+                return False
 
         def _add(parsed: dict) -> bool:
             nonlocal all_items, seen_urls
             if parsed["url"] in seen_urls:
                 return False
             seen_urls.add(parsed["url"])
+            if _is_expired(parsed):
+                return False
             all_items.append(parsed)
             return True
 
@@ -94,7 +134,8 @@ class Crawler:
                     if featured:
                         for item in parser.parse_featured_list(featured):
                             stats["items_found"] += 1
-                            _add(item)
+                            if not _add(item):
+                                stats["items_expired"] += 1
                 except Exception as e:
                     logger.warning("获取 %s 首页推荐失败: %s", source, e)
 
@@ -118,8 +159,10 @@ class Crawler:
 
                     for item in parsed_list:
                         stats["items_found"] += 1
-                        _add(item)
-                        source_matched.append(item)
+                        if _add(item):
+                            source_matched.append(item)
+                        else:
+                            stats["items_expired"] += 1
 
                     page += 1
                     if page <= max_pages:
@@ -147,9 +190,9 @@ class Crawler:
                 stats["items_updated"] += 1
 
         logger.info(
-            "采集完成: %d 页, %d 条, 新增 %d, 更新 %d",
+            "采集完成: %d 页, %d 条, 新增 %d, 更新 %d, 过期跳过 %d",
             stats["pages_crawled"], stats["items_found"],
-            stats["items_new"], stats["items_updated"],
+            stats["items_new"], stats["items_updated"], stats["items_expired"],
         )
         return all_items, stats
 

@@ -1,10 +1,15 @@
 """基于 Supabase 的竞赛数据存储，支持全文搜索。"""
 
+import json as _json
 import logging
 import os
 import re
+import subprocess
+import sys
+
 import threading
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from supabase import create_client, Client
@@ -78,6 +83,88 @@ def _build_pg_dsn(supabase_url: str, password: str) -> str:
     return f"postgresql://postgres.{ref}:{password}@db.{ref}.supabase.co:5432/postgres"
 
 
+class _EmbeddingWorker:
+    """常驻 embedding 子进程管理器 — 模型只加载一次，复用进程。"""
+
+    def __init__(self):
+        self._proc: Optional[subprocess.Popen] = None
+        self._lock = threading.Lock()
+        self._stderr_thread = None
+
+    def _start(self):
+        worker = Path(__file__).resolve().parent / "_embedding_worker.py"
+        env = dict(os.environ)
+        env["CUDA_VISIBLE_DEVICES"] = ""
+        self._proc = subprocess.Popen(
+            [sys.executable, str(worker)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="utf-8",
+            errors="replace",
+        )
+        # 后台线程消费 stderr，防止管道堵塞
+        def _drain():
+            while self._proc and self._proc.stderr:
+                try:
+                    self._proc.stderr.read(4096)
+                except Exception:
+                    break
+
+        self._stderr_thread = threading.Thread(target=_drain, daemon=True)
+        self._stderr_thread.start()
+
+    def compute(self, candidates: list[dict], intent: str) -> Optional[list[float]]:
+        with self._lock:
+            for attempt in range(2):
+                try:
+                    if self._proc is None or self._proc.poll() is not None:
+                        if self._proc is not None:
+                            print(f"[_EmbeddingWorker] 进程已死 (code={self._proc.poll()}), 重启", flush=True)
+                        self._cleanup()
+                        self._start()
+                        print(f"[_EmbeddingWorker] daemon 进程已启动 (pid={self._proc.pid})", flush=True)
+
+                    request = _json.dumps({"candidates": candidates, "intent": intent})
+                    self._proc.stdin.write(request + "\n")
+                    self._proc.stdin.flush()
+                    response = self._proc.stdout.readline()
+
+                    if not response:
+                        print("[_EmbeddingWorker] daemon 无响应 (stdout EOF)", flush=True)
+                        self._proc.kill()
+                        try:
+                            leftover = self._proc.stderr.read()
+                            if leftover.strip():
+                                print(f"[_EmbeddingWorker] daemon stderr: {leftover.strip()[-500:]}", flush=True)
+                        except Exception:
+                            pass
+                        self._proc = None
+                        if attempt == 0:
+                            continue
+                        return None
+
+                    scores = _json.loads(response)
+                    if isinstance(scores, list) and len(scores) == len(candidates):
+                        return scores
+                    print(f"[_EmbeddingWorker] daemon 返回 null (attempt {attempt})", flush=True)
+                    return None
+                except Exception as e:
+                    print(f"[_EmbeddingWorker] 通信异常: {e} (attempt {attempt})", flush=True)
+                    self._cleanup()
+                    if attempt == 0:
+                        continue
+            return None
+
+    def _cleanup(self):
+        if self._proc:
+            try:
+                self._proc.kill()
+            except Exception:
+                pass
+            self._proc = None
+
+
 class SupabaseStore:
     """基于 Supabase PostgreSQL 的存储后端。
 
@@ -89,6 +176,7 @@ class SupabaseStore:
     def __init__(self, url: str, key: str):
         self.client: Client = create_client(url, key)
         self._lock = threading.Lock()
+        self._embed_worker = _EmbeddingWorker()
         self._ensure_tables(url)
 
     def _ensure_tables(self, supabase_url: str):
@@ -115,17 +203,20 @@ class SupabaseStore:
                 )
             return
 
+        def _pg_run_ddl(ddl: str):
+            pg = __import__("psycopg2")  # noqa: F811
+            dsn = _build_pg_dsn(supabase_url, password)
+            conn = pg.connect(dsn)
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(ddl)
+            conn.close()
+
         if needs_tables:
             try:
-                psycopg2 = __import__("psycopg2")
-                dsn = _build_pg_dsn(supabase_url, password)
-                conn = psycopg2.connect(dsn)
-                conn.autocommit = True
-                with conn.cursor() as cur:
-                    cur.execute(_COMPETITIONS_DDL)
-                    cur.execute(_CRAWL_LOGS_DDL)
-                    cur.execute(_INDEX_DDL)
-                conn.close()
+                _pg_run_ddl(_COMPETITIONS_DDL)
+                _pg_run_ddl(_CRAWL_LOGS_DDL)
+                _pg_run_ddl(_INDEX_DDL)
                 logger.info("Supabase 表 + 索引已自动创建")
             except Exception as exc:
                 logger.warning(
@@ -133,15 +224,8 @@ class SupabaseStore:
                     exc, _COMPETITIONS_DDL, _CRAWL_LOGS_DDL, _INDEX_DDL,
                 )
         else:
-            # 表存在 → 确保索引也在
             try:
-                psycopg2 = __import__("psycopg2")
-                dsn = _build_pg_dsn(supabase_url, password)
-                conn = psycopg2.connect(dsn)
-                conn.autocommit = True
-                with conn.cursor() as cur:
-                    cur.execute(_INDEX_DDL)
-                conn.close()
+                _pg_run_ddl(_INDEX_DDL)
                 logger.info("索引已就绪: idx_competitions_collected_at")
             except Exception as exc:
                 logger.debug("索引创建跳过 (%s), 可手动: %s", exc, _INDEX_DDL)
@@ -159,50 +243,105 @@ class SupabaseStore:
         return result.count > 0
 
     def upsert_item(self, item: dict) -> str:
-        """插入或更新一条竞赛记录。去重键 = url + source。返回 'new' | 'updated'。"""
-        is_new = not self.exists(item["url"], item["source"])
+        """插入或更新一条竞赛记录。去重键 = url + source。返回 'new' | 'updated'。
 
-        if is_new:
-            self._insert(item)
-            return "new"
-        else:
-            self._update(item)
+        新记录同时写入 collected_at 和 updated_at；已有记录（同 url + source）
+        只刷新 updated_at，保留原始 collected_at，确保新鲜度计算不偏离。
+        """
+        row = self._to_row(item)
+        now = datetime.now().isoformat()
+        url = item["url"]
+        source = item["source"]
+
+        if self.exists(url, source):
+            resp = (
+                self.client.table("competitions")
+                .update({"updated_at": now})
+                .eq("url", url)
+                .eq("source", source)
+                .execute()
+            )
+            if resp.data:
+                logger.info("Supabase 更新: %s", item.get("title", "")[:40])
             return "updated"
 
-    def _insert(self, item: dict):
-        row = self._to_row(item)
-        row["collected_at"] = datetime.now().isoformat()
-        row["updated_at"] = row["collected_at"]
-
+        row["collected_at"] = now
+        row["updated_at"] = now
         resp = self.client.table("competitions").insert(row).execute()
         if resp.data:
-            logger.info("Supabase 插入成功: %s", item.get("title", "")[:40])
-
-    def _update(self, item: dict):
-        row = self._to_row(item)
-        row["updated_at"] = datetime.now().isoformat()
-
-        resp = (
-            self.client.table("competitions")
-            .update(row)
-            .eq("url", item["url"])
-            .eq("source", item["source"])
-            .execute()
-        )
-        if resp.data:
-            logger.info("Supabase 更新成功: %s", item.get("title", "")[:40])
+            logger.info("Supabase 插入: %s", item.get("title", "")[:40])
+        return "new"
 
     def get_all_items(self, source: Optional[str] = None) -> list[dict]:
-        """返回所有竞赛记录，可按来源过滤。
+        """返回所有竞赛记录的轻量字段（用于缓存检查 + embedding）。
 
-        目前数据量 200+ 条，一次查询足够。Supabase REST API 单次
-        上限 1000 行，未来超过时需改为分页拉取。
+        仅选 cache/embedding 需要的列，跳过 raw_text/attachments 等大字段，
+        避免 Supabase 查询超时。
         """
-        query = self.client.table("competitions").select("*").order("collected_at", desc=True).limit(2000)
+        query = self.client.table("competitions").select(
+            "id,title,description,source,category,contest_end,collected_at"
+        ).limit(2000)
         if source:
             query = query.eq("source", source)
         result = query.execute()
         return result.data if result.data else []
+
+    def get_full_items_by_ids(self, ids: list[int]) -> list[dict]:
+        """按 ID 列表补全完整字段（raw_text, url 等），供下游 info_extract 使用。"""
+        if not ids:
+            return []
+        all_rows: list[dict] = []
+        # Supabase IN 查询分批，避免单次过滤太大
+        for i in range(0, len(ids), 50):
+            batch = ids[i:i + 50]
+            result = (
+                self.client.table("competitions")
+                .select("*")
+                .in_("id", batch)
+                .execute()
+            )
+            if result.data:
+                all_rows.extend(result.data)
+        return all_rows
+
+    def delete_expired(self) -> int:
+        """删除 contest_end 已明确过期的竞赛，返回删除条数。
+
+        仅删除 contest_end 非空、可解析且日期 < 今天的条目。
+        contest_end 为空或无法解析的保留，避免误删。
+        """
+        from datetime import date
+        today = date.today()
+        deleted = 0
+
+        # 先查全表 contest_end（轻量字段），找到过期 ID
+        result = (
+            self.client.table("competitions")
+            .select("id,contest_end")
+            .limit(2000)
+            .execute()
+        )
+        expired_ids = []
+        for row in (result.data or []):
+            end_str = str(row.get("contest_end", "")).strip()
+            if not end_str:
+                continue
+            try:
+                if date.fromisoformat(end_str[:10]) < today:
+                    expired_ids.append(row["id"])
+            except (ValueError, TypeError):
+                continue
+
+        # 逐条删除（Supabase REST 不支持 IN delete）
+        for rid in expired_ids:
+            try:
+                self.client.table("competitions").delete().eq("id", rid).execute()
+                deleted += 1
+            except Exception:
+                logger.debug("删除 id=%d 失败，跳过", rid)
+
+        logger.info("过期清理完成: %d 条删除", deleted)
+        return deleted
 
     # ---- 爬取日志 ----
 
@@ -267,6 +406,58 @@ class SupabaseStore:
         # TF-IDF 兜底
         scores = self._tfidf_rank(candidates, user_intent)
         return self._top_ranked(candidates, scores, limit)
+
+    def search_semantic_local(
+        self,
+        candidates: list[dict],
+        user_intent: str,
+        limit: int = 10,
+    ) -> list[dict]:
+        """语义搜索（纯本地，不调 LLM）：embedding → TF-IDF。
+
+        由调用方传入已过滤的候选列表，避免重复查库。
+        """
+        if not user_intent or not user_intent.strip() or not candidates:
+            return candidates[:limit] if candidates else []
+
+        # 尝试本地 embedding
+        scores = self._try_local_embedding(candidates, user_intent)
+        if scores is not None:
+            result = self._top_ranked(candidates, scores, limit)
+            print(f"[supabase_store] embedding 返回 {len(result)} 条, top: {[(c['title'][:25], f'{s:.0f}') for c, s in sorted(zip(candidates, scores), key=lambda x: -x[1])[:10]]}", flush=True)
+            return result
+
+        # TF-IDF 兜底
+        print(f"[supabase_store] embedding 失败，降级 TF-IDF", flush=True)
+        scores = self._tfidf_rank(candidates, user_intent)
+        return self._top_ranked(candidates, scores, limit)
+
+    @staticmethod
+    def filter_active(items: list[dict]) -> list[dict]:
+        """过滤已过期的竞赛（contest_end 日期已过今天）。
+
+        只过滤能明确判断为过期的条目：contest_end 为空或无法解析
+        的保留，避免误删有效数据。
+        """
+        from datetime import date
+
+        kept: list[dict] = []
+        today = date.today()
+        for it in items:
+            end_str = str(it.get("contest_end", "")).strip()
+            if not end_str:
+                kept.append(it)
+                continue
+            try:
+                # 只取日期部分 YYYY-MM-DD
+                end_date = date.fromisoformat(end_str[:10])
+                if end_date >= today:
+                    kept.append(it)
+                # else: 已过期，丢弃
+            except (ValueError, TypeError):
+                # 无法解析的日期视为未知，保留
+                kept.append(it)
+        return kept
 
     def _get_candidates(
         self,
@@ -349,31 +540,21 @@ class SupabaseStore:
         return scores
 
     def _try_local_embedding(self, candidates: list[dict], user_intent: str) -> Optional[list[float]]:
-        """sentence-transformers 本地 embedding + 余弦相似度。"""
-        try:
-            from sentence_transformers import SentenceTransformer
-            import numpy as np
-        except ImportError:
+        """本机 embedding（常驻子进程，模型只加载一次）。"""
+        worker = Path(__file__).resolve().parent / "_embedding_worker.py"
+        if not worker.exists():
+            print("[supabase_store] _embedding_worker.py 不存在", flush=True)
             return None
 
         try:
-            model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-            texts = [
-                (c["title"] or "") + " " + (c.get("description") or "")[:200]
-                for c in candidates
-            ]
-            intent_emb = model.encode([user_intent])[0]
-            doc_embs = model.encode(texts)
-
-            # cosine similarity
-            scores = []
-            for emb in doc_embs:
-                sim = np.dot(intent_emb, emb) / (np.linalg.norm(intent_emb) * np.linalg.norm(emb) + 1e-9)
-                scores.append(float(sim * 100))
-            logger.info("本地 embedding 打分完成: %d 条", len(scores))
+            scores = self._embed_worker.compute(candidates, user_intent)
+            if scores is not None:
+                print(f"[supabase_store] embedding daemon 成功: {len(scores)} 条", flush=True)
+            else:
+                print("[supabase_store] embedding daemon 返回 None", flush=True)
             return scores
         except Exception as e:
-            logger.warning("本地 embedding 失败: %s", e)
+            print(f"[supabase_store] embedding daemon 异常: {e}", flush=True)
             return None
 
     def _tfidf_rank(self, candidates: list[dict], user_intent: str) -> list[float]:
