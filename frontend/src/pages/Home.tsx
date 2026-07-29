@@ -327,6 +327,18 @@ export function Home() {
                   <ArrowRightOutlined style={{ color: item.arrowColor, fontSize:14, flexShrink:0 }} />
                 </div>
                 <Typography.Text type='secondary' style={{ fontSize:13, lineHeight:1.6, flex:1 }}>{item.desc}</Typography.Text>
+                {item.title === '浏览竞赛库' && (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      fontSize: 11,
+                      color: 'rgba(0, 0, 0, 0.3)',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    当前推荐结果基于已有竞赛数据库生成，部分赛事信息可能未实时同步，建议前往竞赛库获取最新数据。
+                  </div>
+                )}
               </div>
             </Card>
           </Col>
