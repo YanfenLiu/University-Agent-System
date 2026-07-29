@@ -1664,7 +1664,11 @@ class MaterialAgent:
             for block in re.split(r"\n\s*\n", body):
                 block = block.strip()
                 if block:
-                    document.add_paragraph(block)
+                    p = document.add_paragraph()
+                    run = p.add_run(block)
+                    run.font.name = "Microsoft YaHei"
+                    run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
+                    run.font.size = Pt(11)
 
         checklist = result.get("checklist", [])
         if checklist:
