@@ -44,10 +44,14 @@ class MainAgent:
     }
 
     reset_commands = {
+        "重置",
         "重置所有",
+        "全部重置",
+        "重置对话",
         "重新开始",
         "清空会话",
         "清空对话",
+        "清除对话",
         "忘记之前的信息",
     }
 
@@ -1012,7 +1016,20 @@ class MainAgent:
             return "处理失败，请稍后重试。"
         data = result.get("data", {})
         text = data.get("final_answer") if isinstance(data, dict) else ""
-        return str(text or result.get("message") or "处理完成。")
+        if str(text or "").strip():
+            return str(text).strip()
+
+        # ``message`` is an internal orchestration/debug field and may contain
+        # values such as "MainAgent completed orchestration.".  It must never
+        # be exposed as the assistant's user-facing answer.
+        status = str(result.get("status") or "failed").strip().lower()
+        if status == "need_input":
+            return "还需要补充一些信息后才能继续，请根据当前提示完善相关内容。"
+        if status == "partial":
+            return "这次只完成了部分处理，你可以补充更多信息后再继续。"
+        if status in {"failed", "skipped"}:
+            return "这次处理没有成功，请稍后重试。"
+        return "这一步已经处理完成。"
 
     def _conversation_profile_summary(self, state: dict[str, Any]) -> str:
         direction = state["competition_type"] or "方向不限"

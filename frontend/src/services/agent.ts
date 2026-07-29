@@ -24,6 +24,31 @@ export async function sendMessage(
       },
     );
 
+    // Fail clearly when GitHub Pages has updated but Render is still serving
+    // the legacy API.  Silently accepting that response loses conversation
+    // state and can expose backend orchestration messages to the user.
+    if (
+      !Object.prototype.hasOwnProperty.call(data, "state_snapshot") ||
+      !data.state_snapshot ||
+      typeof data.state_snapshot !== "object"
+    ) {
+      return {
+        success: false,
+        session_id: sessionId,
+        response: {
+          text: "后端服务版本尚未更新，请先在 Render 部署 main 分支的最新提交后再试。",
+          type: "error",
+          files: [],
+          recommendations: [],
+        },
+        state_snapshot: stateSnapshot,
+        metadata: {
+          status: "error",
+          error_code: "backend_version_mismatch",
+        },
+      };
+    }
+
     const responseData = (data?.response as Record<string, unknown>) || {};
     const rawRecs = responseData?.recommendations;
     const recommendations: Array<Record<string, unknown>> = Array.isArray(rawRecs)

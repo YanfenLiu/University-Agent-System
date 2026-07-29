@@ -97,6 +97,37 @@ def test_reset_all_does_not_call_llm(monkeypatch):
     assert result["state_snapshot"]["major"] == ""
 
 
+def test_short_reset_aliases_do_not_call_llm(monkeypatch):
+    agent = _agent()
+
+    def fail_if_called(*_):
+        raise AssertionError("reset must not call LLM")
+
+    monkeypatch.setattr(agent, "understand_conversation_turn", fail_if_called)
+    for command in ("重置", "重置对话", "清除对话"):
+        state = agent.new_conversation_state()
+        state["major"] = "软件工程"
+        result = agent.run_conversation_turn(command, state)
+
+        assert result["metadata"]["reset"] is True
+        assert result["response"]["type"] == "reset"
+        assert result["state_snapshot"]["major"] == ""
+
+
+def test_internal_orchestration_message_is_not_exposed():
+    agent = _agent()
+    text = agent._conversation_result_text(
+        {
+            "status": "need_input",
+            "message": "MainAgent completed orchestration.",
+            "data": {},
+        }
+    )
+
+    assert "MainAgent completed orchestration" not in text
+    assert "补充" in text
+
+
 def test_profile_collection_is_one_topic_per_turn(monkeypatch):
     agent = _agent()
     turns = iter(
