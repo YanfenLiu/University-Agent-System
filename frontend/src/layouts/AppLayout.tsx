@@ -10,7 +10,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       <Layout.Header style={{ background: designTokens.colorBgContainer, display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: designTokens.boxShadow }}>
         <Typography.Title level={4} style={{ margin: 0, color: designTokens.colorPrimary }}>赛智通</Typography.Title>
       </Layout.Header>
-      <Layout.Content style={{ padding: designTokens.spacing.xl }}>{children}</Layout.Content>
+      <Layout.Content style={{ padding: "12px 32px 32px" }}>{children}</Layout.Content>
       <Layout.Footer style={{ textAlign: 'center', color: designTokens.colorTextSecondary }}>用 AI 帮你找到更适合的竞赛</Layout.Footer>
     </Layout>
   );
