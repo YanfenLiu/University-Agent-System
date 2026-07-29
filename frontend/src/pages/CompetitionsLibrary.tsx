@@ -1,10 +1,12 @@
 import { Col, Input, Row, Tag, Typography, Spin, Alert, Result, message } from 'antd';
 import { useMemo, useState } from 'react';
+
 import { CompetitionCard } from '../components/CompetitionCard';
-import { RefreshButton } from '../components/RefreshButton';          // ★ NEW
+import { RefreshButton } from '../components/RefreshButton';
 import { useCompetitionsData, useCompetitionsLoading, useCompetitionsError } from '../contexts/CompetitionsDataContext';
 import { useCompetitions } from '../contexts/CompetitionsContext';
 import { designTokens } from '../styles/tokens';
+
 import { SearchOutlined, TrophyOutlined } from '@ant-design/icons';
 
 const { success } = message;
@@ -16,10 +18,9 @@ export function CompetitionsLibrary() {
   const error = useCompetitionsError();
   const [searchText, setSearchText] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);               // ★ NEW
+  const [refreshing, setRefreshing] = useState(false);
   const { addCompetition, isJoined } = useCompetitions();
 
-  // ★ NEW — 刷新函数（当前只模拟 loading，不调接口）
   const handleRefresh = async () => {
     await new Promise((resolve) => setTimeout(resolve, 1500));
   };
@@ -61,7 +62,7 @@ export function CompetitionsLibrary() {
     });
     return Array.from(map.entries())
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 20);
+      .slice(0, 20); // 只展示前 20 个热门标签
   }, [competitions]);
 
   // 筛选
@@ -96,7 +97,7 @@ export function CompetitionsLibrary() {
         >
           <TrophyOutlined style={{ color: designTokens.colorPrimary }} />
           竞赛库
-          <RefreshButton                              {/* ★ NEW */}
+          <RefreshButton
             onRefresh={handleRefresh}
             loading={refreshing}
             style={{ marginLeft: 'auto' }}
