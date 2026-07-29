@@ -1,4 +1,4 @@
-﻿import {
+import {
   Card,
   Col,
   Row,
@@ -66,9 +66,10 @@ export function AIRecommendation() {
       <Row gutter={24} style={{ minHeight: 580 }}>
         {/* 左侧：对话区 */}
         <Col xs={24} md={16}>
-          <div
+                    <div
             style={{
               height: "100%",
+              maxHeight: "620px",
               display: "flex",
               flexDirection: "column",
               background: "#fff",
