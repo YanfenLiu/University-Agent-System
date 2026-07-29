@@ -1,5 +1,5 @@
 import { Button, Card, Col, Row, Space, Tag, Typography, message } from 'antd';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 import {
   TrophyOutlined,
@@ -49,6 +49,15 @@ const WORKFLOW_NODES = [
   { step: '05', label: '生成方案', desc: '输出个性化推荐路线', color: '#a78bfa' },
 ];
 
+// 工作流提示文字
+const STATUS_TEXTS = [
+  '正在等待输入你的需求…',
+  'AI 正在分析你的画像特征…',
+  '正在搜索最契合的赛事资源…',
+  'AI 正在综合评分与排序…',
+  '个性化方案生成完毕，点击开始查看！',
+];
+
 // 赛智通首页
 export function Home() {
     const competitions = useCompetitionsData();
@@ -56,6 +65,32 @@ export function Home() {
   const { navigateTo } = useNavigation();
   const { addCompetition, isJoined } = useCompetitions();
     const [aiLoading, setAiLoading] = useState(false);
+    // 工作流动态轮播
+    const [activeStep, setActiveStep] = useState(0);
+    const [visibleNodes, setVisibleNodes] = useState<number[]>([]);
+    const flowIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // 节点逐个出现动画
+    useEffect(() => {
+      const timers: ReturnType<typeof setTimeout>[] = [];
+      WORKFLOW_NODES.forEach((_, i) => {
+        timers.push(setTimeout(() => {
+          setVisibleNodes(prev => [...prev, i]);
+        }, i * 200));
+      });
+      return () => timers.forEach(t => clearTimeout(t));
+    }, []);
+
+    // 步骤循环轮播
+    useEffect(() => {
+      flowIntervalRef.current = setInterval(() => {
+        setActiveStep(prev => (prev + 1) % WORKFLOW_NODES.length);
+      }, 2500);
+      return () => {
+        if (flowIntervalRef.current) clearInterval(flowIntervalRef.current);
+      };
+    }, []);
+
     const goAI = () => {
       setAiLoading(true);
       navigateTo('ai');
@@ -137,25 +172,104 @@ export function Home() {
                 </Typography.Text>
               </div>
 
-              {WORKFLOW_NODES.map((node, i) => (
-                <div key={i} style={{ display:'flex', alignItems:'center', gap:14, marginBottom:i < 4 ? 18 : 0, position:'relative' }}>
-                  {i < 4 && (
-                    <div style={{ position:'absolute', left:15, top:34, width:2, height:26, background:'linear-gradient(to bottom, ' + node.color + '40, ' + WORKFLOW_NODES[i+1].color + '40)' }} />
+                            {WORKFLOW_NODES.map((node, i) => {
+                const isActive = i === activeStep;
+                const isPast = i < activeStep;
+                const isVisible = visibleNodes.includes(i);
+                const isLast = i === WORKFLOW_NODES.length - 1;
+
+                return (
+                <div key={i} style={{
+                  display:'flex', alignItems:'center', gap:14,
+                  marginBottom: isLast ? 0 : 18,
+                  position:'relative',
+                  opacity: isVisible ? 1 : 0,
+                  transform: isVisible ? 'translateX(0)' : 'translateX(-20px)',
+                  transition: 'opacity 0.5s ease-out, transform 0.5s ease-out',
+                  transitionDelay: i * 0.05 + 's',
+                }}>
+                  {!isLast && (
+                    <div style={{
+                      position:'absolute', left:15, top:34, width:2, height:26,
+                      background: isPast
+                        ? 'linear-gradient(to bottom, ' + node.color + ', ' + WORKFLOW_NODES[i+1].color + ')'
+                        : isActive
+                          ? 'linear-gradient(to bottom, ' + node.color + '80, ' + WORKFLOW_NODES[i+1].color + '20)'
+                          : 'linear-gradient(to bottom, ' + node.color + '20, ' + WORKFLOW_NODES[i+1].color + '20)',
+                      transition: 'background 0.8s ease',
+                      boxShadow: isPast ? '0 0 6px ' + node.color + '60' : 'none',
+                    }} />
                   )}
-                  <div style={{ width:32, height:32, borderRadius:'50%', background:'linear-gradient(135deg, ' + node.color + '30, ' + node.color + '10)', border:'1px solid ' + node.color + '50', display:'flex', alignItems:'center', justifyContent:'center', color:node.color, fontSize:11, fontWeight:600, flexShrink:0, position:'relative', zIndex:1 }}>
-                    {node.step}
+                  <div style={{
+                    width:32, height:32, borderRadius:'50%',
+                    background: isActive
+                      ? 'linear-gradient(135deg, ' + node.color + ', ' + node.color + '80)'
+                      : 'linear-gradient(135deg, ' + node.color + '30, ' + node.color + '10)',
+                    border: isActive
+                      ? '2px solid ' + node.color
+                      : '1px solid ' + node.color + '50',
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    color: isActive ? '#fff' : node.color,
+                    fontSize:11, fontWeight:600, flexShrink:0,
+                    position:'relative', zIndex:1,
+                    transform: isActive ? 'scale(1.15)' : 'scale(1)',
+                    transition: 'all 0.4s ease',
+                    boxShadow: isActive ? '0 0 20px ' + node.color + '80' : 'none',
+                  }}>
+                    {isActive ? (
+                      <div style={{
+                        width:14, height:14, borderRadius:'50%',
+                        border:'2px solid rgba(255,255,255,0.6)',
+                        borderTopColor:'#fff',
+                        animation:'spinnerRotate 0.8s linear infinite',
+                      }} />
+                    ) : isPast ? '✓' : node.step}
                   </div>
                   <div style={{ flex:1 }}>
-                    <Typography.Text style={{ color:'#fff', fontSize:13, fontWeight:500, display:'block' }}>{node.label}</Typography.Text>
-                    <Typography.Text style={{ color:'rgba(255,255,255,0.75)', fontSize:12 }}>{node.desc}</Typography.Text>
+                    <Typography.Text style={{
+                      color: isActive ? '#fff' : isPast ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.5)',
+                      fontSize: isActive ? 14 : 13,
+                      fontWeight: isActive ? 600 : 500,
+                      display:'block',
+                      transition: 'all 0.4s ease',
+                    }}>{node.label}</Typography.Text>
+                    <Typography.Text style={{
+                      color: isActive ? node.color : isPast ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.4)',
+                      fontSize:12,
+                      transition: 'all 0.4s ease',
+                    }}>{isActive ? node.desc + '…' : node.desc}</Typography.Text>
                   </div>
-                  <div style={{ width:8, height:8, borderRadius:'50%', background:i === 0 ? '#60a5fa' : 'rgba(255,255,255,0.1)', boxShadow:i === 0 ? '0 0 12px rgba(96,165,250,0.5)' : 'none', animation:i === 0 ? 'nodePulse 2s ease-in-out infinite' : 'none' }} />
+                  <div style={{
+                    width:8, height:8, borderRadius:'50%',
+                    background: isActive ? node.color : isPast ? node.color + '80' : 'rgba(255,255,255,0.1)',
+                    boxShadow: isActive ? '0 0 14px ' + node.color : isPast ? '0 0 6px ' + node.color + '40' : 'none',
+                    animation: isActive ? 'nodePulse 1.5s ease-in-out infinite' : 'none',
+                    transition: 'all 0.4s ease',
+                  }} />
                 </div>
-              ))}
+                );
+              })}
 
-              <div style={{ marginTop:24, padding:'12px 16px', background:'rgba(22,119,255,0.08)', borderRadius:10, border:'1px solid rgba(22,119,255,0.15)', display:'flex', alignItems:'center', gap:10 }}>
-                <div style={{ width:20, height:20, borderRadius:'50%', border:'2px solid rgba(22,119,255,0.4)', borderTopColor:'#1677ff', animation:'glowRotate 1s linear infinite' }} />
-                <Typography.Text style={{ color:'rgba(255,255,255,0.75)', fontSize:12 }}>AI 智能体已就绪，等待你的需求输入</Typography.Text>
+              <div style={{
+                marginTop:24, padding:'12px 16px',
+                background: 'linear-gradient(135deg, rgba(22,119,255,0.12), rgba(22,119,255,0.05))',
+                borderRadius:10, border:'1px solid rgba(22,119,255,0.2)',
+                display:'flex', alignItems:'center', gap:10,
+              }}>
+                <div style={{
+                  width:22, height:22, borderRadius:'50%',
+                  border:'2.5px solid rgba(22,119,255,0.25)',
+                  borderTopColor:'#1677ff',
+                  borderRightColor:'#1677ff',
+                  animation:'spinnerRotate 0.8s linear infinite',
+                  flexShrink:0,
+                }} />
+                <Typography.Text style={{
+                  color:'rgba(255,255,255,0.85)', fontSize:12,
+                  animation:'textBlink 2s ease-in-out infinite',
+                }}>
+                  {STATUS_TEXTS[activeStep]}
+                </Typography.Text>
               </div>
             </div>
           </Col>
