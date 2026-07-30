@@ -207,18 +207,6 @@ class MainAgent:
         """
         text = str(user_input or "").strip()
         state = self._normalize_conversation_state(state_snapshot)
-        # Migrate browser snapshots produced by the briefly-used grouped
-        # preference question back to the deterministic one-field flow.
-        if state.get("pending_action") == "collect_preferences":
-            if state.get("competition_type_status") == "unknown":
-                state["pending_action"] = "collect_competition_type"
-            elif state.get("skills_status") == "unknown":
-                state["pending_action"] = "collect_skills"
-            elif state.get("competition_level_status") == "unknown":
-                state["pending_action"] = "collect_competition_level"
-            else:
-                state["pending_action"] = ""
-
         if self._is_reset_command(text):
             return self._conversation_response(
                 text=(
@@ -425,7 +413,7 @@ class MainAgent:
             "acknowledgement": "不超过45字，自然承接用户的话，不提问",
             "reply_target": (
                 "collect_major|collect_grade|collect_competition_type|collect_skills|"
-                "collect_competition_level|provide_material_project|empty"
+                "collect_competition_level|collect_preferences|provide_material_project|empty"
             ),
             "reply_text": (
                 "结合用户本轮表达自然承接，并只询问reply_target对应的一项信息；"
@@ -446,8 +434,8 @@ class MainAgent:
                         "此时major、grade、skills_add、skills_remove和corrected_fields必须为空，"
                         "也不能输出profile_change。用户自己的项目介绍属于project_description。"
                         "‘没有硬性要求/没什么硬性要求/都可以’要结合当前追问字段标记no_preference，"
-                        "只改那一个字段：追问级别就只标competition_level_status，追问技能就只标skills_status，"
-                        "追问方向就只标competition_type_status；不要顺带清空、补全或改写其它字段。"
+                        "只改明确回答的字段；如果当前问题一次询问了方向、技能和级别，"
+                        "用户明确说‘都可以/都可接受/都不限/没有特别要求’时，可以把这三项仍未知状态一起标为no_preference。"
                         "字段约定：某字段本轮未提及时输出空字符串或null，系统不会改旧值；"
                         "本轮明确提到则输出非空值，系统会覆盖规则草稿或旧值"
                         "（major、grade、competition_type、competition_level、team_preference均如此）。"
@@ -473,17 +461,21 @@ class MainAgent:
                         "如果提到了推荐序号或名称，把它写入selected_recommendation。"
                         "材料类型必须归一化为material_type给定枚举；没有明确类型就输出empty，不要猜。"
                         "如果已有pending_action，优先把本轮短回答理解为对该追问的回答。"
-                        "尤其当pending_action是collect_competition_type时，"
+                        "尤其当pending_action是collect_competition_type或collect_preferences时，"
                         "用户只回答‘人工智能’‘数学建模’‘算法’等方向名称，必须写入competition_type，"
                         "绝不能当成新专业或profile_change；只有用户明确说‘我是X专业’‘专业改成X’"
-                        "‘其实学的是X’时才修改major。"
+                        "‘其实学的是X’时才修改major。pending_action是collect_preferences时，"
+                        "应一次理解用户对方向、技能和级别中任意一项或多项的回答；如果用户概括说"
+                        "‘都可以’‘都可接受’‘都不限’‘没有要求’‘没有特别要求’，可以把仍未确定的"
+                        "方向、技能和级别都标为no_preference，随后直接开始推荐。"
                         "用户明确要求清空全部记忆、重置会话或重新开始时，dialogue_action用reset_all。"
                         "acknowledgement要像自然对话，优先使用‘明白了’‘了解’‘这样我就清楚了’，"
                         "不要使用‘已记录’‘字段’‘状态’等系统日志口吻。"
                         "同时根据已有状态和本轮新增信息，预测系统下一步唯一缺少的信息："
                         "依次检查专业、年级、竞赛方向、技能、竞赛级别；材料任务没有具体竞赛或项目时"
-                        "使用provide_material_project。每轮只追问一个字段，不要把方向、技能和级别"
-                        "合并成同一个问题，也不要根据一句笼统回答推断多个字段。把对应动作写入reply_target，并在reply_text中"
+                        "使用provide_material_project。方向、技能、级别中同时缺少两项以上时，"
+                        "reply_target使用collect_preferences并把它们自然地合并成一个简短问题；"
+                        "把对应动作写入reply_target，并在reply_text中"
                         "用自然、口语化、贴合上下文的语言承接，使用‘你’而不是‘您’，"
                         "不要说‘已更新你的专业/状态/字段’，也不要机械复述用户原话。"
                         "reply_text不能声称已经完成推荐、搜索或材料生成，不能编造竞赛名称、用户经历、"
@@ -784,6 +776,27 @@ class MainAgent:
         if not state.get("grade"):
             state["pending_action"] = "collect_grade"
             return "你目前读大几，或者是在研究生阶段？"
+        missing_preferences = [
+            key
+            for key, status_key in (
+                ("direction", "competition_type_status"),
+                ("skills", "skills_status"),
+                ("level", "competition_level_status"),
+            )
+            if state.get(status_key) == "unknown"
+        ]
+        if len(missing_preferences) >= 2:
+            state["pending_action"] = "collect_preferences"
+            prompts = {
+                "direction": "想尝试的方向（例如 AI、算法、建模或创新创业）",
+                "skills": "目前会的技能、工具或做过的项目",
+                "level": "对校级、省级、国家级或国际级有没有偏好",
+            }
+            details = "；".join(prompts[key] for key in missing_preferences)
+            return (
+                f"再简单说说这几项就可以开始推荐了：{details}。"
+                "可以一次性回答；没有特别要求的部分直接说不限即可。"
+            )
         if state.get("competition_type_status") == "unknown":
             state["pending_action"] = "collect_competition_type"
             return (
