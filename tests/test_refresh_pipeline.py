@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import api
 from agents.main_agent import MainAgent
 from agents.refresh_service import RefreshService
+from agents.info_collect.supabase_store import SupabaseStore
 
 
 def test_recommendation_skips_collect_and_extract_without_raw_text():
@@ -130,3 +131,27 @@ def test_refresh_api_returns_existing_job_without_dispatch(monkeypatch):
     assert result.status == "already_running"
     assert result.job_id == 9
     assert dispatched == []
+
+
+def test_local_embedding_is_disabled_by_default(monkeypatch):
+    class FailingWorker:
+        def compute(self, *_args, **_kwargs):
+            raise AssertionError("the heavyweight worker must not start by default")
+
+    monkeypatch.delenv("ENABLE_LOCAL_EMBEDDING", raising=False)
+    store = SupabaseStore.__new__(SupabaseStore)
+    store._embed_worker = FailingWorker()
+
+    assert store._try_local_embedding([{"title": "AI competition"}], "AI") is None
+
+
+def test_local_embedding_can_be_enabled_explicitly(monkeypatch):
+    class FakeWorker:
+        def compute(self, *_args, **_kwargs):
+            return [88.0]
+
+    monkeypatch.setenv("ENABLE_LOCAL_EMBEDDING", "true")
+    store = SupabaseStore.__new__(SupabaseStore)
+    store._embed_worker = FakeWorker()
+
+    assert store._try_local_embedding([{"title": "AI competition"}], "AI") == [88.0]

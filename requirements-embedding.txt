@@ -1,0 +1,6 @@
+-r requirements.txt
+
+# Optional local semantic-search worker for machines with sufficient memory.
+# Render's 512 MB web plan should use the lightweight TF-IDF fallback instead.
+fastembed>=0.3.0
+onnxruntime>=1.18.0
