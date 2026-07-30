@@ -103,12 +103,18 @@ class Jingsai52Parser(BaseParser):
             # 截止日期
             regist_end = ""
             for pat in [
-                r"截止时间[：:]\s*(.+?)(?:[，\|\|]|$)",
-                r"截止日期[：:]\s*(.+?)(?:[，\|\|]|$)",
-                r"报名截止[：:]\s*(.+?)(?:[，\|\|]|$)",
-                r"报名时间[：:]\s*即日起[至到—\-]\s*(.+?)(?:[，\|\|]|$)",
-                r"征集截止时间[：:]\s*(.+?)(?:[，\|\|]|$)",
-                r"考试时间[：:]\s*(.+?)(?:[，\|\|]|$)",
+                r"报名截止时间[：:]\s*(.+?)(?:[，\|\|\n]|$)",
+                r"报名截止日期[：:]\s*(.+?)(?:[，\|\|\n]|$)",
+                r"报名截止[：:]\s*(.+?)(?:[，\|\|\n]|$)",
+                r"截止时间[：:]\s*(.+?)(?:[，\|\|\n]|$)",
+                r"截止日期[：:]\s*(.+?)(?:[，\|\|\n]|$)",
+                r"报名时间[：:]\s*即日起[至到\-\—~～]\s*(\d{4}[年.\-/]\d{1,2}[月.\-/]\d{1,2})",
+                r"报名时间[：:]\s*即日起[至到\-\—~～]\s*(\d{1,2}[月.\-/]\d{1,2})",
+                r"征集截止时间[：:]\s*(.+?)(?:[，\|\|\n]|$)",
+                r"作品提交截止[：:]\s*(.+?)(?:[，\|\|\n]|$)",
+                r"初赛截止日期[：:]\s*(.+?)(?:[，\|\|\n]|$)",
+                r"即日起[至到\-\—~～]\s*(\d{4}[年.\-/]\d{1,2}[月.\-/]\d{1,2})",
+                r"即日起[至到\-\—~～]\s*(\d{1,2}[月.\-/]\d{1,2})",
             ]:
                 m = re.search(pat, dd_text)
                 if m:
@@ -150,10 +156,15 @@ class Jingsai52Parser(BaseParser):
             item["title"] = page_title
 
         # 只取 detail 中有用且不会污染列表数据的字段
-        for key in ("description", "contest_start", "contest_end", "co_organizers", "supporters"):
+        for key in ("contest_start", "contest_end", "co_organizers", "supporters"):
             detail_val = detail_fields.get(key)
             if detail_val and not item.get(key):
                 item[key] = detail_val
+
+        # description 优先用详情页的完整正文，列表页只含截断摘要
+        detail_desc = detail_fields.get("description", "")
+        if detail_desc and len(detail_desc) > len(item.get("description", "")):
+            item["description"] = detail_desc
 
         # 列表页没有 organizer 时才从 detail 补充
         if not item.get("organizer") and detail_fields.get("organizer"):
@@ -272,7 +283,15 @@ class Jingsai52Parser(BaseParser):
     def _ext_regist_end(self, text: str) -> str:
         for pat in [
             r"报名截止时间[：:]\s*(.+?)(?:\n|$)",
+            r"报名截止日期[：:]\s*(.+?)(?:\n|$)",
+            r"报名截止[：:]\s*(.+?)(?:\n|$)",
+            r"截止时间[：:]\s*(.+?)(?:\n|$)",
+            r"截止日期[：:]\s*(.+?)(?:\n|$)",
+            r"报名时间[：:]\s*即日起[至到\-\—~～]\s*(\d{4}[年.\-/]\d{1,2}[月.\-/]\d{1,2})",
+            r"报名时间[：:]\s*即日起[至到\-\—~～]\s*(\d{1,2}[月.\-/]\d{1,2})",
             r"初赛截止日期[：:]\s*(.+?)(?:\n|$)",
+            r"征集截止时间[：:]\s*(.+?)(?:\n|$)",
+            r"作品提交截止[：:]\s*(.+?)(?:\n|$)",
         ]:
             m = re.search(pat, text)
             if m:
@@ -315,7 +334,11 @@ class Jingsai52Parser(BaseParser):
         s = s.strip()
         if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
             return s
-        m = re.match(r"(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})[日号]?", s)
+        if re.match(r"^\d{4}\.\d{2}\.\d{2}$", s):
+            return s.replace(".", "-")
+        if re.match(r"^\d{4}/\d{2}/\d{2}$", s):
+            return s.replace("/", "-")
+        m = re.match(r"(\d{4})[年.\-/](\d{1,2})[月.\-/](\d{1,2})[日号]?", s)
         if m:
             return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
         m = re.match(r"(\d{1,2})月(\d{1,2})[日号]?", s)

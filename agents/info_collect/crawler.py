@@ -80,7 +80,7 @@ class Crawler:
         elapsed_start = time.monotonic()
 
         def _is_expired(item: dict) -> bool:
-            end_str = str(item.get("contest_end", "")).strip()
+            end_str = str(item.get("regist_end", "")).strip()
             if not end_str:
                 return False
             try:

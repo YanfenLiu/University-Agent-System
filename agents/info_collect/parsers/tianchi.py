@@ -131,7 +131,10 @@ class TianchiParser(BaseParser):
 
     def merge_detail(self, item: dict, detail_fields: dict) -> dict:
         for key, val in detail_fields.items():
-            if val and not item.get(key):  # 只在列表值为空时才从详情补充
+            if key == "description":
+                if val and len(val) > len(item.get("description", "")):
+                    item[key] = val
+            elif val and not item.get(key):
                 item[key] = val
 
         list_data = {}
