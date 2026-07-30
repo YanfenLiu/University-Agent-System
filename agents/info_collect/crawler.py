@@ -72,11 +72,21 @@ class Crawler:
         sources: list[str],
         max_pages_per_source: int,
         log_id: int,
+        refresh_job_id: int | None = None,
     ) -> tuple[list[dict], dict]:
         """全量采集：遍历 sources，所有条目不做过滤直接入库。"""
         all_items = []
         seen_urls = set()
-        stats = {"pages_crawled": 0, "items_found": 0, "items_new": 0, "items_updated": 0, "items_expired": 0}
+        stats = {
+            "pages_crawled": 0,
+            "items_found": 0,
+            "items_new": 0,
+            "items_changed": 0,
+            "items_unchanged": 0,
+            "items_updated": 0,
+            "items_expired": 0,
+            "extraction_ids": [],
+        }
         elapsed_start = time.monotonic()
 
         def _is_expired(item: dict) -> bool:
@@ -183,10 +193,23 @@ class Crawler:
 
         # 全部入库（URL + source 去重）
         for item in all_items:
-            op = self.storage.upsert_item(item)
-            if op == "new":
-                stats["items_new"] += 1
+            if hasattr(self.storage, "upsert_item_detailed"):
+                detail = self.storage.upsert_item_detailed(
+                    item, refresh_job_id=refresh_job_id
+                )
+                operation = detail["operation"]
+                if detail.get("needs_extraction") and detail.get("record_id"):
+                    stats["extraction_ids"].append(detail["record_id"])
             else:
+                operation = self.storage.upsert_item(item)
+                operation = "new" if operation == "new" else "changed"
+
+            if operation == "new":
+                stats["items_new"] += 1
+            elif operation == "unchanged":
+                stats["items_unchanged"] += 1
+            else:
+                stats["items_changed"] += 1
                 stats["items_updated"] += 1
 
         logger.info(

@@ -14,5 +14,3 @@ openai>=1.0.0
 olefile>=0.46
 supabase>=2.0.0
 psycopg2-binary>=2.9
-fastembed>=0.3.0
-onnxruntime>=1.18.0

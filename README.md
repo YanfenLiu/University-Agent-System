@@ -178,6 +178,22 @@ python -m pytest -q -p no:cacheprovider
 
 **Supabase 持久化存储**：配置 `SUPABASE_URL` + `SUPABASE_ANON_KEY` + `SUPABASE_DB_PASSWORD` 后，采集到的竞赛数据会写入云端 PostgreSQL 数据库。后续请求优先从数据库搜索已有数据，仅在数据不够或超过有效期（默认 24小时）时触发爬虫刷新。
 
+### 竞赛库逻辑全量刷新
+
+1. 在 Supabase SQL Editor 执行 `migration.sql`，创建刷新字段和
+   `refresh_jobs` 表。
+2. 在 GitHub Actions Secrets 配置 `SUPABASE_URL`、
+   `SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY` 和
+   `DEEPSEEK_API_KEY`。
+3. 在 Render 配置 `SUPABASE_SERVICE_ROLE_KEY` 和
+   `GITHUB_ACTIONS_TOKEN`。GitHub Token 只需当前仓库 Actions 的写权限。
+4. 合并到 `main` 后，`Refresh Competition Database` 工作流支持网页
+   手动触发，并在北京时间每天 02:00 自动运行。
+
+刷新会重新扫描所有数据源，通过内容哈希区分新增、变化和未变化记录。
+只有新增或原文变化的记录进入信息抽取；单个来源失败时保留该来源旧数据，
+明确过期的竞赛会被删除。
+
 ## Supabase 数据库表结构
 
 配置好 Supabase 后，首次启动会自动通过直连 PostgreSQL 创建以下两张表和一个索引（如果有限制无法自动建表，可以手动操作，将migration.sql的语句复制到 SQL Editor后运行即可）：

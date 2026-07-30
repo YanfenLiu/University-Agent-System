@@ -48,6 +48,7 @@ class CrawlService:
         sources: Optional[list[str]] = None,
         max_pages_per_source: Optional[int] = None,
         task_id: str = "",
+        refresh_job_id: int | None = None,
     ) -> dict[str, Any]:
         """同步爬取指定源，返回 stats + log_id。
 
@@ -83,7 +84,13 @@ class CrawlService:
 
         crawler = Crawler(self.config, storage)
         try:
-            _, wstats = crawler.crawl(keywords, sources, max_pages, log_id)
+            _, wstats = crawler.crawl(
+                keywords,
+                sources,
+                max_pages,
+                log_id,
+                refresh_job_id=refresh_job_id,
+            )
         except Exception as e:
             logger.exception("爬取失败: %s", sources)
             storage.update_crawl_log(
@@ -99,6 +106,20 @@ class CrawlService:
                 "stats": {"pages_crawled": 0, "items_found": 0, "items_new": 0, "items_updated": 0},
             }
         else:
+            if not wstats.get("pages_crawled") and not wstats.get("items_found"):
+                error_message = "No pages or competition items were returned by the source."
+                storage.update_crawl_log(
+                    log_id,
+                    status="failed",
+                    error_message=error_message,
+                    finished_at=datetime.now().isoformat(),
+                )
+                return {
+                    "log_id": log_id,
+                    "status": "failed",
+                    "error": error_message,
+                    "stats": wstats,
+                }
             storage.update_crawl_log(
                 log_id,
                 pages_crawled=wstats.get("pages_crawled", 0),
