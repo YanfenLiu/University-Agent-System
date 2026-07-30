@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any
 
 from .crawl_service import CrawlService
 from .info_collect.registry import SourceRegistry
 from .info_collect.storage import Storage
 from .info_extract_agent import InfoExtractAgent
+from .time_utils import beijing_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class RefreshService:
             self.storage.update_refresh_job(
                 job_id,
                 status="running",
-                started_at=datetime.now().isoformat(),
+                started_at=beijing_now_iso(),
                 error_message=None,
             )
 
@@ -82,7 +82,7 @@ class RefreshService:
             self.storage.update_refresh_job(
                 job_id,
                 status=final_status,
-                finished_at=datetime.now().isoformat(),
+                finished_at=beijing_now_iso(),
                 source_results=source_results,
                 **totals,
             )
@@ -92,7 +92,7 @@ class RefreshService:
             self.storage.update_refresh_job(
                 job_id,
                 status="failed",
-                finished_at=datetime.now().isoformat(),
+                finished_at=beijing_now_iso(),
                 source_results=source_results,
                 error_message=str(exc)[:1000],
                 **totals,

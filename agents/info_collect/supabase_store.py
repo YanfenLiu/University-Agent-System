@@ -9,11 +9,11 @@ import subprocess
 import sys
 
 import threading
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from supabase import create_client, Client
+from ..time_utils import beijing_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +282,7 @@ class SupabaseStore:
         已有值的字段不覆盖。
         """
         row = self._to_row(item)
-        now = datetime.now().isoformat()
+        now = beijing_now_iso()
         url = item["url"]
         source = item["source"]
 
@@ -356,7 +356,7 @@ class SupabaseStore:
     ) -> dict:
         """Upsert raw data and report new/changed/unchanged."""
         row = self._to_row(item)
-        now = datetime.now().isoformat()
+        now = beijing_now_iso()
         content_hash = self._content_hash(item)
         existing = (
             self.client.table("competitions")
@@ -412,7 +412,7 @@ class SupabaseStore:
         *,
         error: str | None = None,
     ) -> None:
-        now = datetime.now().isoformat()
+        now = beijing_now_iso()
         if error:
             values = {
                 "extraction_status": "failed",
@@ -450,7 +450,7 @@ class SupabaseStore:
             "status": status,
             "trigger_type": trigger_type,
             "trigger_ip_hash": trigger_ip_hash,
-            "started_at": datetime.now().isoformat(),
+            "started_at": beijing_now_iso(),
         }).execute()
         return response.data[0] if response.data else {}
 
@@ -557,7 +557,7 @@ class SupabaseStore:
                 "task_id": task_id,
                 "source": source,
                 "status": "running",
-                "started_at": datetime.now().isoformat(),
+                "started_at": beijing_now_iso(),
             })
             .execute()
         )
@@ -566,7 +566,7 @@ class SupabaseStore:
 
     def update_crawl_log(self, log_id: int, **kwargs):
         if "finished_at" not in kwargs:
-            kwargs["finished_at"] = datetime.now().isoformat()
+            kwargs["finished_at"] = beijing_now_iso()
         (
             self.client.table("crawl_logs")
             .update(kwargs)

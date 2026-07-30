@@ -7,7 +7,10 @@ import os
 import sys
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def main() -> int:
@@ -26,7 +29,7 @@ def main() -> int:
     values: dict[str, str] = {"status": status}
     if status == "failed":
         values.update({
-            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "finished_at": datetime.now(BEIJING_TZ).isoformat(),
             "error_message": (
                 "GitHub Actions failed before the refresh script started."
             ),
