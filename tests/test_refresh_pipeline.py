@@ -133,6 +133,56 @@ def test_refresh_api_returns_existing_job_without_dispatch(monkeypatch):
     assert dispatched == []
 
 
+def test_queued_refresh_job_expires_after_ten_minutes():
+    now = datetime(2026, 7, 30, 6, 0, tzinfo=timezone.utc)
+
+    assert api._refresh_job_is_stale(
+        {
+            "status": "queued",
+            "started_at": "2026-07-30T05:49:59+00:00",
+        },
+        now,
+    )
+    assert not api._refresh_job_is_stale(
+        {
+            "status": "queued",
+            "started_at": "2026-07-30T05:55:00+00:00",
+        },
+        now,
+    )
+
+
+def test_refresh_api_marks_successful_dispatch(monkeypatch):
+    class FakeStore:
+        def __init__(self):
+            self.updates = []
+
+        def get_active_refresh_job(self):
+            return None
+
+        def get_recent_ip_refresh(self, _ip_hash, _since):
+            return None
+
+        def create_refresh_job(self, *_args, **_kwargs):
+            return {"id": 12}
+
+        def update_refresh_job(self, job_id, **values):
+            self.updates.append((job_id, values))
+
+    store = FakeStore()
+    dispatched = []
+    monkeypatch.setattr(api, "_refresh_store", lambda: store)
+    monkeypatch.setattr(api, "_dispatch_refresh_workflow", dispatched.append)
+    request = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
+
+    result = api.start_competition_refresh(request)
+
+    assert result.status == "accepted"
+    assert result.job_id == 12
+    assert dispatched == [12]
+    assert store.updates == [(12, {"status": "dispatched"})]
+
+
 def test_local_embedding_is_disabled_by_default(monkeypatch):
     class FailingWorker:
         def compute(self, *_args, **_kwargs):

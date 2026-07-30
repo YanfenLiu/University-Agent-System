@@ -465,7 +465,7 @@ class SupabaseStore:
 
     def get_active_refresh_job(self) -> dict | None:
         result = self.client.table("refresh_jobs").select("*").in_(
-            "status", ["queued", "running"]
+            "status", ["queued", "dispatched", "running"]
         ).order("id", desc=True).limit(1).execute()
         return result.data[0] if result.data else None
 
