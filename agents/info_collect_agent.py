@@ -12,6 +12,7 @@ from .info_collect.storage import Storage
 from .info_collect.crawler import Crawler
 from .info_collect.file_parser import parse_files
 from .info_collect.registry import SourceRegistry
+from .time_utils import beijing_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -228,13 +229,14 @@ class InfoCollectAgent:
                     log_id, items_found=len(file_paths),
                     items_new=0, items_updated=0,
                     status="failed", error_message=str(e),
-                    finished_at=datetime.now().isoformat(),
+                    finished_at=beijing_now_iso(),
                 )
                 raise
             storage.update_crawl_log(
                 log_id, items_found=len(file_paths),
                 items_new=fstats["files_parsed"], items_updated=0,
-                status="completed", finished_at=datetime.now().isoformat(),
+                status="completed",
+                finished_at=beijing_now_iso(),
             )
             all_stats["local_file"] = fstats
 

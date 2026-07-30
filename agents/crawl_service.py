@@ -9,7 +9,6 @@
 
 import logging
 import os
-from datetime import datetime
 from typing import Any, Optional
 
 import yaml
@@ -17,6 +16,7 @@ import yaml
 from .info_collect.storage import Storage
 from .info_collect.crawler import Crawler
 from .info_collect.registry import SourceRegistry
+from .time_utils import beijing_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class CrawlService:
                 log_id,
                 status="failed",
                 error_message=str(e)[:500],
-                finished_at=datetime.now().isoformat(),
+                finished_at=beijing_now_iso(),
             )
             return {
                 "log_id": log_id,
@@ -112,7 +112,7 @@ class CrawlService:
                     log_id,
                     status="failed",
                     error_message=error_message,
-                    finished_at=datetime.now().isoformat(),
+                    finished_at=beijing_now_iso(),
                 )
                 return {
                     "log_id": log_id,
@@ -127,7 +127,7 @@ class CrawlService:
                 items_new=wstats.get("items_new", 0),
                 items_updated=wstats.get("items_updated", 0),
                 status="completed",
-                finished_at=datetime.now().isoformat(),
+                finished_at=beijing_now_iso(),
             )
             logger.info(
                 "爬取完成: %s, 新增 %d, 更新 %d",

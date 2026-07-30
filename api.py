@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from supabase import create_client
 
 from agents.main_agent import MainAgent
+from agents.time_utils import beijing_now, beijing_now_iso
 
 # ---------------------------------------------------------------------------
 # 临时诊断日志
@@ -288,7 +289,7 @@ def start_competition_refresh(request: Request) -> RefreshResponse:
             store.update_refresh_job(
                 int(active["id"]),
                 status="failed",
-                finished_at=datetime.now(timezone.utc).isoformat(),
+                finished_at=beijing_now_iso(),
                 error_message=f"Refresh task remained {status} beyond its timeout.",
             )
         else:
@@ -302,7 +303,7 @@ def start_competition_refresh(request: Request) -> RefreshResponse:
             )
 
     ip_hash = _client_ip_hash(request)
-    since = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    since = (beijing_now() - timedelta(minutes=10)).isoformat()
     recent = store.get_recent_ip_refresh(ip_hash, since)
     if recent:
         return RefreshResponse(
@@ -322,7 +323,7 @@ def start_competition_refresh(request: Request) -> RefreshResponse:
         store.update_refresh_job(
             job_id,
             status="failed",
-            finished_at=datetime.now(timezone.utc).isoformat(),
+            finished_at=beijing_now_iso(),
             error_message=str(exc)[:1000],
         )
         logger.exception("Failed to dispatch refresh workflow")
