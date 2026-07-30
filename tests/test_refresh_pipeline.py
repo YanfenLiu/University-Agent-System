@@ -155,3 +155,20 @@ def test_local_embedding_can_be_enabled_explicitly(monkeypatch):
     store._embed_worker = FakeWorker()
 
     assert store._try_local_embedding([{"title": "AI competition"}], "AI") == [88.0]
+
+
+def test_recommendation_query_uses_durable_profile_instead_of_latest_reply():
+    query = MainAgent._recommendation_search_query({
+        "user_input": "没有特殊偏好",
+        "user_profile": {
+            "major": "计算机科学与技术",
+            "interests": ["人工智能"],
+            "skills": ["Python"],
+            "development_goals": [],
+        },
+    })
+
+    assert "计算机科学与技术" in query
+    assert "人工智能" in query
+    assert "Python" in query
+    assert "没有特殊偏好" not in query
