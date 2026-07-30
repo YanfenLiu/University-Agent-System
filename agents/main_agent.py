@@ -1665,7 +1665,7 @@ class MainAgent:
                 return ["recommendation"]
             if self._has_raw_text_input(payload):
                 return ["info_extract", "recommendation"]
-            return ["info_collect", "info_extract", "recommendation"]
+            return ["recommendation"]
         if task_type in {"material", "generate_material"}:
             if payload.get("project_info") or payload.get("structured_items") or payload.get("projects"):
                 return ["material"]
@@ -2104,6 +2104,17 @@ If no agent is needed, selected_agents must be empty.
         projects = payload.get("projects")
         if isinstance(projects, list) and projects:
             payload["structured_items"] = projects
+            return payload
+
+        from .competition_search_service import CompetitionSearchService
+
+        query = str(original_input.get("user_input", "")).strip()
+        max_results = int(
+            self.config.get("recommendation", {}).get("recommendation_pool_size", 10)
+        )
+        payload["structured_items"] = CompetitionSearchService(self.config).search(
+            query, limit=max_results
+        )
         return payload
 
     def _adapt_material_input(

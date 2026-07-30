@@ -18,5 +18,17 @@ services:
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GITHUB_ACTIONS_TOKEN
+        sync: false
+      - key: GITHUB_REPOSITORY
+        value: Yhrjkcz1/University-Agent-System
+      - key: GITHUB_REFRESH_WORKFLOW
+        value: refresh-competitions.yml
+      - key: GITHUB_REFRESH_REF
+        value: main
+      - key: REFRESH_IP_HASH_SALT
+        generateValue: true
       # Existing deployments may still use VITE_SUPABASE_URL and
       # VITE_SUPABASE_ANON_KEY; api.py accepts both naming schemes.

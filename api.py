@@ -10,11 +10,16 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+import hashlib
+import json
+import urllib.error
+import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -99,6 +104,14 @@ class CompetitionListResponse(BaseModel):
     page: int = 1
     page_size: int = 200
     source: str = "supabase"
+
+
+class RefreshResponse(BaseModel):
+    success: bool
+    status: str
+    message: str
+    job_id: int | None = None
+    retry_after_seconds: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +205,127 @@ def list_competitions(
         page=page,
         page_size=page_size,
     )
+
+
+def _refresh_store():
+    from agents.info_collect.supabase_store import SupabaseStore
+
+    url, anon_key = _supabase_api_config()
+    key = _first_configured_env("SUPABASE_SERVICE_ROLE_KEY") or anon_key
+    if not url or not key:
+        raise HTTPException(status_code=503, detail="Supabase refresh configuration is missing.")
+    return SupabaseStore(url=url, key=key)
+
+
+def _client_ip_hash(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    address = forwarded.split(",", 1)[0].strip()
+    if not address and request.client:
+        address = request.client.host
+    salt = os.getenv("REFRESH_IP_HASH_SALT", "competition-refresh")
+    return hashlib.sha256(f"{salt}:{address}".encode("utf-8")).hexdigest()
+
+
+def _dispatch_refresh_workflow(job_id: int) -> None:
+    token = os.getenv("GITHUB_ACTIONS_TOKEN", "").strip()
+    repository = os.getenv(
+        "GITHUB_REPOSITORY", "Yhrjkcz1/University-Agent-System"
+    ).strip()
+    workflow = os.getenv(
+        "GITHUB_REFRESH_WORKFLOW", "refresh-competitions.yml"
+    ).strip()
+    ref = os.getenv("GITHUB_REFRESH_REF", "main").strip()
+    if not token:
+        raise RuntimeError("GITHUB_ACTIONS_TOKEN is not configured.")
+
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{repository}/actions/workflows/{workflow}/dispatches",
+        data=json.dumps({
+            "ref": ref,
+            "inputs": {"job_id": str(job_id), "trigger_type": "manual"},
+        }).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+            "User-Agent": "saizhitong-refresh-api",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        if response.status != 204:
+            raise RuntimeError(f"GitHub workflow dispatch returned {response.status}.")
+
+
+@app.post("/api/competitions/refresh", response_model=RefreshResponse, status_code=202)
+def start_competition_refresh(request: Request) -> RefreshResponse:
+    store = _refresh_store()
+    active = store.get_active_refresh_job()
+    if active:
+        try:
+            started_at = datetime.fromisoformat(str(active.get("started_at")))
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
+            is_stale = datetime.now(timezone.utc) - started_at > timedelta(hours=1)
+        except (TypeError, ValueError):
+            is_stale = True
+        if is_stale:
+            store.update_refresh_job(
+                int(active["id"]),
+                status="failed",
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                error_message="Refresh task did not start or finish within one hour.",
+            )
+        else:
+            return RefreshResponse(
+                success=True,
+                status="already_running",
+                job_id=int(active["id"]),
+                message="竞赛数据库正在刷新，请稍后查看。",
+            )
+
+    ip_hash = _client_ip_hash(request)
+    since = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    recent = store.get_recent_ip_refresh(ip_hash, since)
+    if recent:
+        return RefreshResponse(
+            success=False,
+            status="rate_limited",
+            job_id=int(recent["id"]),
+            retry_after_seconds=600,
+            message="刷新请求过于频繁，请十分钟后再试。",
+        )
+
+    job = store.create_refresh_job("manual", ip_hash, status="queued")
+    job_id = int(job["id"])
+    try:
+        _dispatch_refresh_workflow(job_id)
+    except Exception as exc:
+        store.update_refresh_job(
+            job_id,
+            status="failed",
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            error_message=str(exc)[:1000],
+        )
+        logger.exception("Failed to dispatch refresh workflow")
+        raise HTTPException(
+            status_code=503,
+            detail="无法启动数据库刷新任务，请检查 GitHub Actions 配置。",
+        ) from exc
+
+    return RefreshResponse(
+        success=True,
+        status="accepted",
+        job_id=job_id,
+        message="已开始刷新，请等待几分钟后刷新网站。",
+    )
+
+
+@app.get("/api/competitions/refresh/status")
+def competition_refresh_status() -> dict[str, Any]:
+    latest = _refresh_store().get_latest_refresh_job()
+    return {"success": True, "job": latest}
 
 
 def _register_generated_files(result: dict[str, Any]) -> None:

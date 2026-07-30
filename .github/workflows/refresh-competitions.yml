@@ -1,0 +1,53 @@
+name: Refresh Competition Database
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: Existing refresh_jobs row created by the API
+        required: false
+        type: string
+      trigger_type:
+        description: Refresh trigger
+        required: true
+        default: manual
+        type: choice
+        options:
+          - manual
+          - scheduled
+  schedule:
+    # 18:00 UTC = 02:00 Asia/Shanghai on the following day.
+    - cron: "0 18 * * *"
+
+concurrency:
+  group: competition-database-refresh
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Refresh Supabase competition data
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          JOB_ID: ${{ inputs.job_id }}
+          TRIGGER_TYPE: ${{ inputs.trigger_type || 'scheduled' }}
+        run: |
+          if [ -n "$JOB_ID" ]; then
+            python -m scripts.refresh_competitions --trigger "$TRIGGER_TYPE" --job-id "$JOB_ID"
+          else
+            python -m scripts.refresh_competitions --trigger scheduled
+          fi

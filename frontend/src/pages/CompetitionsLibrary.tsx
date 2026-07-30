@@ -6,6 +6,7 @@ import { RefreshButton } from '../components/RefreshButton';
 import { useCompetitionsData, useCompetitionsLoading, useCompetitionsError } from '../contexts/CompetitionsDataContext';
 import { useCompetitions } from '../contexts/CompetitionsContext';
 import { designTokens } from '../styles/tokens';
+import { startCompetitionRefresh } from '../services/refresh';
 
 import { SearchOutlined, TrophyOutlined } from '@ant-design/icons';
 
@@ -22,7 +23,19 @@ export function CompetitionsLibrary() {
   const { addCompetition, isJoined } = useCompetitions();
 
   const handleRefresh = async () => {
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    setRefreshing(true);
+    try {
+      const result = await startCompetitionRefresh();
+      if (result.status === 'rate_limited') {
+        message.warning(result.message);
+      } else {
+        success(result.message);
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '无法启动数据库刷新');
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   // ===== 加载中状态 =====
