@@ -219,7 +219,7 @@ def test_competitions_api_accepts_existing_vite_supabase_names(monkeypatch):
     assert result.total == 0
 
 
-def test_profile_collection_groups_preferences_and_fills_remaining(monkeypatch):
+def test_profile_collection_asks_one_preference_at_a_time(monkeypatch):
     agent = _agent()
     turns = iter(
         [
@@ -257,9 +257,9 @@ def test_profile_collection_groups_preferences_and_fills_remaining(monkeypatch):
 
     first = agent.run_conversation_turn("我是计算机专业大二", {})
     assert "方向" in first["response"]["text"]
-    assert "技能" in first["response"]["text"]
-    assert "级" in first["response"]["text"]
-    assert first["state_snapshot"]["pending_action"] == "collect_preferences"
+    assert "技能" not in first["response"]["text"]
+    assert "级别" not in first["response"]["text"]
+    assert first["state_snapshot"]["pending_action"] == "collect_competition_type"
 
     second = agent.run_conversation_turn("方向都可以", first["state_snapshot"])
     assert "技能" in second["response"]["text"]
@@ -285,7 +285,7 @@ def test_profile_collection_groups_preferences_and_fills_remaining(monkeypatch):
     )
 
 
-def test_matching_semantic_question_is_used(monkeypatch):
+def test_matching_single_field_semantic_question_is_used(monkeypatch):
     agent = _agent()
     monkeypatch.setattr(
         agent,
@@ -294,18 +294,15 @@ def test_matching_semantic_question_is_used(monkeypatch):
             intent="recommendation",
             major="人工智能",
             grade="大二",
-            reply_target="collect_preferences",
-            reply_text=(
-                "AI 相关竞赛选择很多。你可以一起说说想尝试的方向、"
-                "会用的工具或项目经历，以及对竞赛级别有没有偏好。"
-            ),
+            reply_target="collect_competition_type",
+            reply_text="AI 相关竞赛选择很多，你想先尝试哪个方向？",
         ),
     )
 
     result = agent.run_conversation_turn("我是人工智能专业大二学生", {})
 
-    assert "项目经历" in result["response"]["text"]
-    assert result["state_snapshot"]["pending_action"] == "collect_preferences"
+    assert "先尝试哪个方向" in result["response"]["text"]
+    assert result["state_snapshot"]["pending_action"] == "collect_competition_type"
 
 
 def test_mismatched_semantic_question_falls_back_to_safe_template(monkeypatch):
