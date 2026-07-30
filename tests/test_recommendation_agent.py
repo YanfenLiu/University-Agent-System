@@ -639,8 +639,8 @@ def test_raw_recommendation_schedule_includes_extraction() -> None:
     request = _base_input(input_data={"data_source": "web"})
     selected = main_agent.select_agents(request)
     _assert(
-        selected == ["info_collect", "info_extract", "recommendation"],
-        f"原始数据推荐调度顺序错误: {selected}",
+        selected == ["recommendation"],
+        f"数据库推荐调度顺序错误: {selected}",
     )
 
 

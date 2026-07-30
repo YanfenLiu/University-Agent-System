@@ -159,9 +159,11 @@ class Storage:
             url = Storage._resolve_env(
                 storage_cfg.get("supabase_url", "")
             ) or os.getenv("SUPABASE_URL", "")
-            key = Storage._resolve_env(
-                storage_cfg.get("supabase_key", "")
-            ) or os.getenv("SUPABASE_ANON_KEY", "")
+            key = (
+                os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+                or Storage._resolve_env(storage_cfg.get("supabase_key", ""))
+                or os.getenv("SUPABASE_ANON_KEY", "")
+            )
 
             if not url or not key:
                 logger.warning(

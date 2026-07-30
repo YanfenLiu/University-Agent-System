@@ -1,5 +1,6 @@
 """基于 Supabase 的竞赛数据存储，支持全文搜索。"""
 
+import hashlib
 import json as _json
 import logging
 import os
@@ -67,6 +68,35 @@ CREATE TABLE IF NOT EXISTS crawl_logs (
 _INDEX_DDL = """\
 CREATE INDEX IF NOT EXISTS idx_competitions_collected_at
   ON competitions (collected_at DESC);"""
+
+_REFRESH_DDL = """\
+ALTER TABLE competitions ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE competitions ADD COLUMN IF NOT EXISTS extraction_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE competitions ADD COLUMN IF NOT EXISTS extraction_error TEXT;
+ALTER TABLE competitions ADD COLUMN IF NOT EXISTS extracted_at TEXT;
+ALTER TABLE competitions ADD COLUMN IF NOT EXISTS last_seen_at TEXT;
+ALTER TABLE competitions ADD COLUMN IF NOT EXISTS refresh_job_id BIGINT;
+CREATE TABLE IF NOT EXISTS refresh_jobs (
+    id BIGSERIAL PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'queued',
+    trigger_type TEXT NOT NULL DEFAULT 'manual',
+    trigger_ip_hash TEXT,
+    started_at TEXT,
+    finished_at TEXT,
+    items_found INTEGER NOT NULL DEFAULT 0,
+    items_new INTEGER NOT NULL DEFAULT 0,
+    items_changed INTEGER NOT NULL DEFAULT 0,
+    items_unchanged INTEGER NOT NULL DEFAULT 0,
+    items_extracted INTEGER NOT NULL DEFAULT 0,
+    items_failed INTEGER NOT NULL DEFAULT 0,
+    items_deleted INTEGER NOT NULL DEFAULT 0,
+    source_results JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error_message TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_competitions_content_hash ON competitions (content_hash);
+CREATE INDEX IF NOT EXISTS idx_competitions_extraction_status ON competitions (extraction_status);
+CREATE INDEX IF NOT EXISTS idx_refresh_jobs_status ON refresh_jobs (status);
+CREATE INDEX IF NOT EXISTS idx_refresh_jobs_finished_at ON refresh_jobs (finished_at DESC);"""
 
 
 def _extract_project_ref(supabase_url: str) -> str | None:
@@ -217,6 +247,7 @@ class SupabaseStore:
                 _pg_run_ddl(_COMPETITIONS_DDL)
                 _pg_run_ddl(_CRAWL_LOGS_DDL)
                 _pg_run_ddl(_INDEX_DDL)
+                _pg_run_ddl(_REFRESH_DDL)
                 logger.info("Supabase 表 + 索引已自动创建")
             except Exception as exc:
                 logger.warning(
@@ -226,6 +257,7 @@ class SupabaseStore:
         else:
             try:
                 _pg_run_ddl(_INDEX_DDL)
+                _pg_run_ddl(_REFRESH_DDL)
                 logger.info("索引已就绪: idx_competitions_collected_at")
             except Exception as exc:
                 logger.debug("索引创建跳过 (%s), 可手动: %s", exc, _INDEX_DDL)
@@ -242,7 +274,7 @@ class SupabaseStore:
         )
         return result.count > 0
 
-    def upsert_item(self, item: dict) -> str:
+    def _legacy_upsert_item(self, item: dict) -> str:
         """插入或更新一条竞赛记录。去重键 = url + source。返回 'new' | 'updated'。
 
         新记录同时写入 collected_at 和 updated_at；已有记录（同 url + source）
@@ -271,6 +303,143 @@ class SupabaseStore:
         if resp.data:
             logger.info("Supabase 插入: %s", item.get("title", "")[:40])
         return "new"
+
+    @staticmethod
+    def _content_hash(item: dict) -> str:
+        payload = {field: item.get(field, "") for field in FIELDS}
+        encoded = _json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def upsert_item_detailed(
+        self,
+        item: dict,
+        *,
+        refresh_job_id: int | None = None,
+    ) -> dict:
+        """Upsert raw data and report new/changed/unchanged."""
+        row = self._to_row(item)
+        now = datetime.now().isoformat()
+        content_hash = self._content_hash(item)
+        existing = (
+            self.client.table("competitions")
+            .select("id,content_hash")
+            .eq("url", item["url"])
+            .eq("source", item["source"])
+            .limit(1)
+            .execute()
+        )
+        current = existing.data[0] if existing.data else None
+
+        if current is None:
+            row.update({
+                "content_hash": content_hash,
+                "extraction_status": "pending",
+                "extraction_error": None,
+                "last_seen_at": now,
+                "refresh_job_id": refresh_job_id,
+                "collected_at": now,
+                "updated_at": now,
+            })
+            response = self.client.table("competitions").insert(row).execute()
+            record = response.data[0] if response.data else {}
+            return {"operation": "new", "record_id": record.get("id"), "needs_extraction": True}
+
+        record_id = current["id"]
+        if current.get("content_hash") == content_hash:
+            self.client.table("competitions").update({
+                "last_seen_at": now,
+                "refresh_job_id": refresh_job_id,
+            }).eq("id", record_id).execute()
+            return {"operation": "unchanged", "record_id": record_id, "needs_extraction": False}
+
+        row.update({
+            "content_hash": content_hash,
+            "extraction_status": "pending",
+            "extraction_error": None,
+            "last_seen_at": now,
+            "refresh_job_id": refresh_job_id,
+            "updated_at": now,
+        })
+        self.client.table("competitions").update(row).eq("id", record_id).execute()
+        return {"operation": "changed", "record_id": record_id, "needs_extraction": True}
+
+    def upsert_item(self, item: dict) -> str:
+        result = self.upsert_item_detailed(item)
+        return "new" if result["operation"] == "new" else "updated"
+
+    def save_extraction_result(
+        self,
+        record_id: int,
+        structured: dict,
+        *,
+        error: str | None = None,
+    ) -> None:
+        now = datetime.now().isoformat()
+        if error:
+            values = {
+                "extraction_status": "failed",
+                "extraction_error": error[:1000],
+                "updated_at": now,
+            }
+        else:
+            values = {
+                "extraction_status": "completed",
+                "extraction_error": None,
+                "extracted_at": now,
+                "updated_at": now,
+            }
+            for source_field, column in {
+                "title": "title",
+                "summary": "description",
+                "organizer": "organizer",
+                "deadline": "regist_end",
+                "registration_time": "regist_start",
+                "type": "category",
+            }.items():
+                value = structured.get(source_field)
+                if value not in (None, "", "unknown"):
+                    values[column] = value
+        self.client.table("competitions").update(values).eq("id", record_id).execute()
+
+    def create_refresh_job(
+        self,
+        trigger_type: str,
+        trigger_ip_hash: str | None = None,
+        *,
+        status: str = "queued",
+    ) -> dict:
+        response = self.client.table("refresh_jobs").insert({
+            "status": status,
+            "trigger_type": trigger_type,
+            "trigger_ip_hash": trigger_ip_hash,
+            "started_at": datetime.now().isoformat(),
+        }).execute()
+        return response.data[0] if response.data else {}
+
+    def update_refresh_job(self, job_id: int, **values) -> None:
+        self.client.table("refresh_jobs").update(values).eq("id", job_id).execute()
+
+    def get_latest_refresh_job(self) -> dict | None:
+        result = self.client.table("refresh_jobs").select("*").order(
+            "id", desc=True
+        ).limit(1).execute()
+        return result.data[0] if result.data else None
+
+    def get_active_refresh_job(self) -> dict | None:
+        result = self.client.table("refresh_jobs").select("*").in_(
+            "status", ["queued", "running"]
+        ).order("id", desc=True).limit(1).execute()
+        return result.data[0] if result.data else None
+
+    def get_recent_ip_refresh(self, trigger_ip_hash: str, since_iso: str) -> dict | None:
+        result = self.client.table("refresh_jobs").select(
+            "id,status,started_at"
+        ).eq("trigger_ip_hash", trigger_ip_hash).gte(
+            "started_at", since_iso
+        ).order("id", desc=True).limit(1).execute()
+        return result.data[0] if result.data else None
 
     def get_all_items(self, source: Optional[str] = None) -> list[dict]:
         """返回所有竞赛记录的轻量字段（用于缓存检查 + embedding）。
