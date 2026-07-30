@@ -709,7 +709,19 @@ class SupabaseStore:
         return scores
 
     def _try_local_embedding(self, candidates: list[dict], user_intent: str) -> Optional[list[float]]:
-        """本机 embedding（常驻子进程，模型只加载一次）。"""
+        """Run the optional local embedding worker.
+
+        The ONNX model runs in a child process and can push a small web
+        instance over its memory limit.  It is therefore opt-in; callers
+        transparently fall back to the lightweight TF-IDF ranker.
+        """
+        enabled = os.getenv("ENABLE_LOCAL_EMBEDDING", "").strip().lower()
+        if enabled not in {"1", "true", "yes", "on"}:
+            logger.info(
+                "Local embedding is disabled; using the lightweight ranking fallback."
+            )
+            return None
+
         worker = Path(__file__).resolve().parent / "_embedding_worker.py"
         if not worker.exists():
             print("[supabase_store] _embedding_worker.py 不存在", flush=True)

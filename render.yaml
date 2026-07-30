@@ -30,5 +30,9 @@ services:
         value: main
       - key: REFRESH_IP_HASH_SALT
         generateValue: true
+      # The ONNX embedding worker can exceed the 512 MB web-instance limit.
+      # Database retrieval falls back to the lightweight TF-IDF ranker.
+      - key: ENABLE_LOCAL_EMBEDDING
+        value: "false"
       # Existing deployments may still use VITE_SUPABASE_URL and
       # VITE_SUPABASE_ANON_KEY; api.py accepts both naming schemes.
