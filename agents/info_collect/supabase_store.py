@@ -428,7 +428,8 @@ class SupabaseStore:
             }
             for source_field, column in {
                 "title": "title",
-                "summary": "description",
+                "summary": "summary",
+                "description": "description",
                 "organizer": "organizer",
                 "deadline": "regist_end",
                 "registration_time": "regist_start",
