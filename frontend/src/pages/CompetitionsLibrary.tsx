@@ -10,6 +10,7 @@ import {
   useRefreshCompetitions,
 } from '../contexts/CompetitionsDataContext';
 import { useCompetitions } from '../contexts/CompetitionsContext';
+import { useAuth } from '../contexts/AuthContext';
 import { designTokens } from '../styles/tokens';
 import {
   getCompetitionRefreshStatus,
@@ -30,6 +31,7 @@ export function CompetitionsLibrary() {
   const [refreshing, setRefreshing] = useState(false);
   const refreshCompetitionList = useRefreshCompetitions();
   const { addCompetition, isJoined } = useCompetitions();
+  const { isAdmin } = useAuth();
 
   const waitForRefresh = async (jobId: number) => {
     const deadline = Date.now() + 30 * 60 * 1000;
@@ -151,11 +153,13 @@ export function CompetitionsLibrary() {
         >
           <TrophyOutlined style={{ color: designTokens.colorPrimary }} />
           竞赛库
-          <RefreshButton
-            onRefresh={handleRefresh}
-            loading={refreshing}
-            style={{ marginLeft: 'auto' }}
-          />
+          {isAdmin && (
+            <RefreshButton
+              onRefresh={handleRefresh}
+              loading={refreshing}
+              style={{ marginLeft: 'auto' }}
+            />
+          )}
         </Typography.Title>
         <Typography.Text type="secondary" style={{ fontSize: 14 }}>
           共收录 <strong style={{ color: designTokens.colorPrimary }}>{competitions.length}</strong> 个竞赛资源
