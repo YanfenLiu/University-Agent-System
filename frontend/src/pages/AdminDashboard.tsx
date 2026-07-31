@@ -5,7 +5,7 @@ import {
   UserOutlined, BarChartOutlined, MessageOutlined,
   TeamOutlined, SearchOutlined,
 } from '@ant-design/icons';
-import { formatTime } from '../utils/time';
+import { formatTime, formatDate } from '../utils/time';
 import { useState, useEffect, useCallback } from 'react';
 import { request } from '../services/apiClient';
 import { designTokens } from '../styles/tokens';
@@ -161,27 +161,61 @@ function UsersTab() {
 }
 
 function ConversationsTab() {
+  // 第一级：用户列表
+  const [users, setUsers] = useState<any[]>([]);
+  const [usersLoading, setUsersLoading] = useState(true);
+
+  // 第二级：选中用户的对话列表
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [convs, setConvs] = useState<any[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
+  const [convTotal, setConvTotal] = useState(0);
+  const [convLoading, setConvLoading] = useState(false);
+  const [convPage, setConvPage] = useState(1);
+
+  // 第三级：对话详情
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedConv, setSelectedConv] = useState<any>(null);
 
-  const loadConvs = useCallback(async (p: number) => {
-    setLoading(true);
+  // 加载用户列表
+  const loadUsers = useCallback(async () => {
+    setUsersLoading(true);
     try {
-      const res = await request<{ items: any[]; total: number }>(`/api/admin/conversations?page=${p}&page_size=50`);
-      setConvs(res.items);
-      setTotal(res.total);
+      const res = await request<{ items: any[] }>('/api/admin/conversation-users');
+      setUsers(res.items || []);
     } catch {
-      message.error('加载对话列表失败');
+      message.error('加载用户列表失败');
     } finally {
-      setLoading(false);
+      setUsersLoading(false);
     }
   }, []);
 
-  useEffect(() => { loadConvs(page); }, [page, loadConvs]);
+  useEffect(() => { loadUsers(); }, [loadUsers]);
+
+  // 加载某用户的对话
+  const loadConvs = useCallback(async (userId: string, p: number) => {
+    setConvLoading(true);
+    try {
+      const res = await request<{ items: any[]; total: number }>(
+        `/api/admin/conversations?page=${p}&page_size=50&user_id=${encodeURIComponent(userId)}`,
+      );
+      setConvs(res.items);
+      setConvTotal(res.total);
+    } catch {
+      message.error('加载对话列表失败');
+    } finally {
+      setConvLoading(false);
+    }
+  }, []);
+
+  const selectUser = (userId: string) => {
+    setSelectedUserId(userId);
+    setConvPage(1);
+    loadConvs(userId, 1);
+  };
+
+  useEffect(() => {
+    if (selectedUserId) loadConvs(selectedUserId, convPage);
+  }, [convPage, selectedUserId, loadConvs]);
 
   const viewConv = async (id: string) => {
     try {
@@ -197,7 +231,10 @@ function ConversationsTab() {
     try {
       await request(`/api/admin/conversations/${id}`, { method: 'DELETE' });
       message.success('已删除');
-      loadConvs(page);
+      if (selectedUserId) {
+        loadConvs(selectedUserId, convPage);
+        loadUsers();
+      }
     } catch {
       message.error('删除失败');
     }
@@ -205,29 +242,76 @@ function ConversationsTab() {
 
   return (
     <>
-      <Table
-        rowKey="id"
-        loading={loading}
-        dataSource={convs}
-        pagination={{ current: page, total, pageSize: 50, onChange: setPage }}
-        columns={[
-          { title: '标题', dataIndex: 'title', width: 200, ellipsis: true },
-          { title: '用户ID', dataIndex: 'user_id', width: 280, ellipsis: true },
-          {
-            title: '更新时间', dataIndex: 'updated_at', width: 180,
-            render: (v: string) => formatTime(v),
-          },
-          {
-            title: '操作', key: 'action', width: 160,
-            render: (_: any, record: any) => (
-              <Space>
-                <Button size="small" onClick={() => viewConv(record.id)} style={{ borderRadius: 8 }}>查看</Button>
-                <Button size="small" danger onClick={() => deleteConv(record.id)} style={{ borderRadius: 8 }}>删除</Button>
-              </Space>
-            ),
-          },
-        ]}
-      />
+      <div style={{ display: 'flex', gap: 24 }}>
+        {/* 用户列表 */}
+        <div style={{ width: 300, flexShrink: 0 }}>
+          <Typography.Text strong style={{ display: 'block', marginBottom: 12 }}>用户列表</Typography.Text>
+          <Table
+            rowKey="user_id"
+            loading={usersLoading}
+            dataSource={users}
+            size="small"
+            pagination={false}
+            showHeader={false}
+            onRow={(record) => ({
+              onClick: () => selectUser(record.user_id),
+              style: {
+                cursor: 'pointer',
+                background: record.user_id === selectedUserId ? 'rgba(22,119,255,0.06)' : undefined,
+              },
+            })}
+            columns={[
+              {
+                title: '用户',
+                render: (_: any, r: any) => (
+                  <div>
+                    <Typography.Text style={{ fontSize: 13 }}>
+                      {r.display_name || r.username}
+                    </Typography.Text>
+                    <br />
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      {r.conversation_count} 条对话 · {formatDate(r.last_active)}
+                    </Typography.Text>
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </div>
+
+        {/* 对话列表 */}
+        <div style={{ flex: 1 }}>
+          {selectedUserId ? (
+            <Table
+              rowKey="id"
+              loading={convLoading}
+              dataSource={convs}
+              pagination={{ current: convPage, total: convTotal, pageSize: 50, onChange: setConvPage }}
+              columns={[
+                { title: '标题', dataIndex: 'title', width: 200, ellipsis: true },
+                {
+                  title: '更新时间', dataIndex: 'updated_at', width: 160,
+                  render: (v: string) => formatTime(v),
+                },
+                {
+                  title: '操作', key: 'action', width: 160,
+                  render: (_: any, record: any) => (
+                    <Space>
+                      <Button size="small" onClick={() => viewConv(record.id)} style={{ borderRadius: 8 }}>查看</Button>
+                      <Button size="small" danger onClick={() => deleteConv(record.id)} style={{ borderRadius: 8 }}>删除</Button>
+                    </Space>
+                  ),
+                },
+              ]}
+            />
+          ) : (
+            <div style={{ textAlign: 'center', padding: 60, color: '#999' }}>
+              点击左侧用户查看对话记录
+            </div>
+          )}
+        </div>
+      </div>
+
       <Drawer
         title="对话详情"
         open={drawerOpen}
