@@ -49,9 +49,6 @@ from auth.service import (
     get_user_portrait, update_user_portrait, get_recent_failed_attempts,
 )
 from auth.dependencies import get_current_user, get_current_admin, get_optional_user
-from auth.rate_limit import limiter, LOGIN_LIMIT
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
 
 # ---------------------------------------------------------------------------
 # 临时诊断日志
@@ -150,10 +147,6 @@ app = FastAPI(
     description="为前端 third-web 提供 Agent 调度 RESTful 接口",
     version="1.0.0",
 )
-
-# Slowapi 限流
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS：生产环境使用白名单，不可用 "*" + credentials
 _allowed = os.getenv("ALLOWED_ORIGINS", "*")
@@ -455,7 +448,6 @@ def run_agent(
 
 
 @app.post("/api/auth/register", response_model=TokenResponse)
-@limiter.limit(LOGIN_LIMIT)
 def auth_register(request: Request, req: RegisterRequest) -> TokenResponse:
     """注册新用户"""
     try:
@@ -477,7 +469,6 @@ def auth_register(request: Request, req: RegisterRequest) -> TokenResponse:
 
 
 @app.post("/api/auth/login", response_model=TokenResponse)
-@limiter.limit(LOGIN_LIMIT)
 def auth_login(request: Request, req: LoginRequest) -> TokenResponse:
     """登录"""
     ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
