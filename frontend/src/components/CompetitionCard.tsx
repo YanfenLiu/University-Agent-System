@@ -124,7 +124,7 @@ export function CompetitionCard({
         <Typography.Paragraph
           type="secondary"
           style={{ fontSize: 13, margin: 0, lineHeight: 1.6 }}
-          ellipsis={expanded ? false : { rows: 2 }}
+          ellipsis={expanded ? { rows: 6 } : { rows: 2 }}
         >
           {competition.summary}
         </Typography.Paragraph>
@@ -201,7 +201,7 @@ export function CompetitionCard({
             </Typography.Text>
             <Typography.Paragraph
               style={{ fontSize: 12, margin: 0, lineHeight: 1.6, color: '#333' }}
-              ellipsis={expanded ? false : { rows: 2 }}
+              ellipsis={expanded ? { rows: 6 } : { rows: 2 }}
             >
               {competition.reason}
             </Typography.Paragraph>
