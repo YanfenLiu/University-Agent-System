@@ -28,7 +28,7 @@ info_collect:
       detail_limit: 10        # HTML 详情页较慢，少抓几条
     ali_tianchi:
       enabled: true
-      max_pages: 3  
+      max_pages: 3
       detail_limit: 0         # 列表 API 已有 introduction，不需要详情
     heywhale:
       enabled: true

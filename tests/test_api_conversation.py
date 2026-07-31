@@ -285,6 +285,42 @@ def test_profile_collection_groups_preferences_and_fills_remaining(monkeypatch):
     )
 
 
+def test_grouped_preferences_accept_one_no_preference_answer(monkeypatch):
+    agent = _agent()
+    turns = iter([
+        _understanding(
+            intent="recommendation",
+            major="计算机科学与技术",
+            grade="大二",
+            competition_type="人工智能",
+        ),
+        _understanding(
+            intent="recommendation",
+            competition_type_status="no_preference",
+            skills_status="no_preference",
+            competition_level_status="no_preference",
+        ),
+    ])
+    monkeypatch.setattr(
+        agent,
+        "understand_conversation_turn",
+        lambda *_: next(turns),
+    )
+    monkeypatch.setattr(agent, "run", lambda _payload: _recommendation_result())
+
+    first = agent.run_conversation_turn(
+        "我是计算机专业大二学生，对AI感兴趣",
+        {},
+    )
+    assert first["state_snapshot"]["pending_action"] == "collect_preferences"
+
+    second = agent.run_conversation_turn("都可以接受", first["state_snapshot"])
+
+    assert second["response"]["type"] == "result"
+    assert second["state_snapshot"]["skills_status"] == "no_preference"
+    assert second["state_snapshot"]["competition_level_status"] == "no_preference"
+
+
 def test_matching_semantic_question_is_used(monkeypatch):
     agent = _agent()
     monkeypatch.setattr(

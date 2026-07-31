@@ -18,6 +18,7 @@ import {
 
 import { CompetitionCard } from "../components/CompetitionCard";
 import { useCompetitions } from "../contexts/CompetitionsContext";
+import { useAuth } from "../contexts/AuthContext";
 import { designTokens } from "../styles/tokens";
 import { useAgentChat } from "../features/ai-agent/hooks/useAgentChat";
 import { ChatSuggestions } from "../features/ai-agent/components/ChatSuggestions";
@@ -25,6 +26,7 @@ import { ChatMessage } from "../features/ai-agent/components/ChatMessage";
 import { ChatLoading } from "../features/ai-agent/components/ChatLoading";
 import { AgentStatusCard } from "../features/ai-agent/components/AgentStatusCard";
 import { UserProfileCard } from "../features/ai-agent/components/UserProfileCard";
+import { ConversationHistory } from "../features/ai-agent/components/ConversationHistory";
 
 
 export function AIRecommendation() {
@@ -33,6 +35,7 @@ export function AIRecommendation() {
     setInput,
     loading,
     showSuggestions,
+    conversationId,
     messages,
     agentSteps,
     userProfile,
@@ -40,9 +43,13 @@ export function AIRecommendation() {
     messagesContainerRef,
     handleSend,
     handleSuggestionClick,
+    loadConversation,
+    newConversation,
+    historyRefreshKey,
     recommendedCompetitions,
   } = useAgentChat();
   const { isJoined, addCompetition } = useCompetitions();
+  const { user } = useAuth();
   const { colorPrimary, borderRadius } = designTokens;
 
   return (
@@ -62,10 +69,21 @@ export function AIRecommendation() {
         </Typography.Text>
       </div>
 
-            {/* 主区域：左右两列等高 */}
+            {/* 主区域：对话历史 + 对话区 + 状态面板 */}
             <Row gutter={24} style={{ minHeight: 480 }}>
-        {/* 左侧：对话区 */}
-        <Col xs={24} md={16}>
+        {/* 对话历史侧边栏（仅登录用户可见） */}
+        {user && (
+          <Col xs={0} lg={5} xl={4} style={{ minWidth: 200 }}>
+            <ConversationHistory
+              activeId={conversationId}
+              onSelect={loadConversation}
+              onNew={newConversation}
+              refreshTrigger={historyRefreshKey}
+            />
+          </Col>
+        )}
+        {/* 中间：对话区 */}
+        <Col xs={24} md={user ? 11 : 16} lg={user ? 11 : 16} xl={user ? 12 : 16}>
                     <div
                         style={{
               height: "100%",

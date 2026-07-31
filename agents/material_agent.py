@@ -1661,14 +1661,7 @@ class MaterialAgent:
             body = str(item.get("content") or "").strip()
             if heading:
                 document.add_heading(heading, level=1)
-            for block in re.split(r"\n\s*\n", body):
-                block = block.strip()
-                if block:
-                    p = document.add_paragraph()
-                    run = p.add_run(block)
-                    run.font.name = "Microsoft YaHei"
-                    run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
-                    run.font.size = Pt(11)
+            self._write_markdown_blocks(document, body)
 
         checklist = result.get("checklist", [])
         if checklist:
@@ -1682,6 +1675,13 @@ class MaterialAgent:
             for tip in suggestions:
                 document.add_paragraph(str(tip), style="List Bullet")
 
+        # 最终统一字体：只补字体名，不覆盖已有字号
+        for paragraph in document.paragraphs:
+            for run in paragraph.runs:
+                if run.font.name is None:
+                    run.font.name = "Microsoft YaHei"
+                run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
+
         footer = section.footer.paragraphs[0]
         footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
         footer_run = footer.add_run("AI 生成初稿，请根据竞赛官方要求人工核对并完善")
@@ -1689,6 +1689,57 @@ class MaterialAgent:
         footer_run.font.color.rgb = RGBColor(120, 120, 120)
 
         document.save(output_path)
+
+    # ============================================================
+    # _write_markdown_blocks — Markdown → docx 格式化段落
+    # ============================================================
+
+    def _write_markdown_blocks(self, document, body: str) -> None:
+        """将 LLM 返回的 markdown 文本逐块写入 docx，保留加粗/列表格式。"""
+        blocks = re.split(r"\n\s*\n", body)
+        for block in blocks:
+            block = block.strip()
+            if not block:
+                continue
+
+            # 无序列表：- item 或 * item
+            if re.match(r"^[-*]\s+", block):
+                lines = block.split("\n")
+                for line in lines:
+                    line = line.strip()
+                    if re.match(r"^[-*]\s+", line):
+                        text = re.sub(r"^[-*]\s+", "", line)
+                        self._md_paragraph(document, text, style="List Bullet")
+                continue
+
+            # 有序列表：1. item
+            if re.match(r"^\d+[.)]\s+", block):
+                lines = block.split("\n")
+                for line in lines:
+                    line = line.strip()
+                    match = re.match(r"^\d+[.)]\s*", line)
+                    if match:
+                        text = line[match.end():]
+                        self._md_paragraph(document, text, style="List Number")
+                continue
+
+            # 普通段落（支持 **加粗**）
+            self._md_paragraph(document, block)
+
+    def _md_paragraph(self, document, text: str, style: str = None) -> None:
+        """写入一个段落，自动处理 **加粗** 并统一字体。"""
+        p = document.add_paragraph(style=style) if style else document.add_paragraph()
+        # 按 **...** 分割
+        parts = re.split(r"(\*\*[^*]+\*\*)", text)
+        for part in parts:
+            if part.startswith("**") and part.endswith("**"):
+                run = p.add_run(part[2:-2])
+                run.bold = True
+            else:
+                run = p.add_run(part)
+            run.font.name = "Microsoft YaHei"
+            run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
+            run.font.size = Pt(11)
 
     # ============================================================
     # 辅助方法

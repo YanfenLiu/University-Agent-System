@@ -62,7 +62,7 @@ class HeywhaleParser(BaseParser):
         cid = item.get("_id", "")
         return {
             "title": item.get("Name", ""),
-            "url": f"{DETAIL_BASE}/about/competition/{cid}",
+            "url": f"{DETAIL_BASE}/home/competition/{cid}",
             "source": "heywhale",
             "raw_text": json.dumps(item, ensure_ascii=False),
             "publish_date": _fmt_iso(item.get("StartDate")),
@@ -84,10 +84,13 @@ class HeywhaleParser(BaseParser):
     # ---- merge_detail ----
 
     def merge_detail(self, item: dict, detail_fields: dict) -> dict:
-        """合并详情到列表项，列表已有值不覆盖。"""
+        """合并详情到列表项，列表已有值不覆盖，但 description 取更长的。"""
         # 列表有的不覆盖，只填列表缺失的
         for key, val in detail_fields.items():
-            if not item.get(key) and val:
+            if key == "description":
+                if val and len(val) > len(item.get("description", "")):
+                    item[key] = val
+            elif not item.get(key) and val:
                 item[key] = val
 
         # raw_text 合并

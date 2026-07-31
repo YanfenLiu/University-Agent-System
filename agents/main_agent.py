@@ -207,7 +207,6 @@ class MainAgent:
         """
         text = str(user_input or "").strip()
         state = self._normalize_conversation_state(state_snapshot)
-
         if self._is_reset_command(text):
             return self._conversation_response(
                 text=(
@@ -435,8 +434,8 @@ class MainAgent:
                         "此时major、grade、skills_add、skills_remove和corrected_fields必须为空，"
                         "也不能输出profile_change。用户自己的项目介绍属于project_description。"
                         "‘没有硬性要求/没什么硬性要求/都可以’要结合当前追问字段标记no_preference，"
-                        "只改那一个字段：追问级别就只标competition_level_status，追问技能就只标skills_status，"
-                        "追问方向就只标competition_type_status；不要顺带清空或改写其它已填字段。"
+                        "只改明确回答的字段；如果当前问题一次询问了方向、技能和级别，"
+                        "用户明确说‘都可以/都可接受/都不限/没有特别要求’时，可以把这三项仍未知状态一起标为no_preference。"
                         "字段约定：某字段本轮未提及时输出空字符串或null，系统不会改旧值；"
                         "本轮明确提到则输出非空值，系统会覆盖规则草稿或旧值"
                         "（major、grade、competition_type、competition_level、team_preference均如此）。"
@@ -467,8 +466,8 @@ class MainAgent:
                         "绝不能当成新专业或profile_change；只有用户明确说‘我是X专业’‘专业改成X’"
                         "‘其实学的是X’时才修改major。pending_action是collect_preferences时，"
                         "应一次理解用户对方向、技能和级别中任意一项或多项的回答；如果用户概括说"
-                        "‘都可以’‘都不限’‘没有要求’，可以把仍未确定的方向、技能和级别都标为"
-                        "no_preference，避免机械地逐项重复追问。"
+                        "‘都可以’‘都可接受’‘都不限’‘没有要求’‘没有特别要求’，可以把仍未确定的"
+                        "方向、技能和级别都标为no_preference，随后直接开始推荐。"
                         "用户明确要求清空全部记忆、重置会话或重新开始时，dialogue_action用reset_all。"
                         "acknowledgement要像自然对话，优先使用‘明白了’‘了解’‘这样我就清楚了’，"
                         "不要使用‘已记录’‘字段’‘状态’等系统日志口吻。"
@@ -476,7 +475,7 @@ class MainAgent:
                         "依次检查专业、年级、竞赛方向、技能、竞赛级别；材料任务没有具体竞赛或项目时"
                         "使用provide_material_project。方向、技能、级别中同时缺少两项以上时，"
                         "reply_target使用collect_preferences并把它们自然地合并成一个简短问题；"
-                        "不要像问卷一样逐字段确认。把对应动作写入reply_target，并在reply_text中"
+                        "把对应动作写入reply_target，并在reply_text中"
                         "用自然、口语化、贴合上下文的语言承接，使用‘你’而不是‘您’，"
                         "不要说‘已更新你的专业/状态/字段’，也不要机械复述用户原话。"
                         "reply_text不能声称已经完成推荐、搜索或材料生成，不能编造竞赛名称、用户经历、"
@@ -796,7 +795,7 @@ class MainAgent:
             details = "；".join(prompts[key] for key in missing_preferences)
             return (
                 f"再简单说说这几项就可以开始推荐了：{details}。"
-                "没有特别要求的部分直接说不限就行，不需要逐条回答。"
+                "可以一次性回答；没有特别要求的部分直接说不限即可。"
             )
         if state.get("competition_type_status") == "unknown":
             state["pending_action"] = "collect_competition_type"
@@ -2108,7 +2107,7 @@ If no agent is needed, selected_agents must be empty.
 
         from .competition_search_service import CompetitionSearchService
 
-        query = str(original_input.get("user_input", "")).strip()
+        query = self._recommendation_search_query(original_input)
         max_results = int(
             self.config.get("recommendation", {}).get("recommendation_pool_size", 10)
         )
@@ -2116,6 +2115,41 @@ If no agent is needed, selected_agents must be empty.
             query, limit=max_results
         )
         return payload
+
+    @staticmethod
+    def _recommendation_search_query(original_input: dict[str, Any]) -> str:
+        """Build retrieval text from durable profile facts, not a short reply.
+
+        The final chat answer is often something like "不限" or "都可以".
+        Using that as the database query discards the major, interests and
+        skills collected in earlier turns and produces unrelated candidates.
+        """
+        profile = original_input.get("user_profile", {})
+        if not isinstance(profile, dict):
+            profile = {}
+
+        values: list[str] = []
+        for key in ("competition_type", "major"):
+            value = str(profile.get(key) or "").strip()
+            if value:
+                values.append(value)
+        for key in ("interests", "skills", "development_goals"):
+            raw_values = profile.get(key, [])
+            if isinstance(raw_values, list):
+                values.extend(
+                    str(value).strip()
+                    for value in raw_values
+                    if str(value).strip()
+                )
+
+        durable_query = " ".join(dict.fromkeys(values))
+        if durable_query:
+            return durable_query
+
+        latest = str(original_input.get("user_input", "")).strip()
+        if latest in {"都可以", "随便", "不限", "没有特殊偏好", "没有特别偏好"}:
+            return ""
+        return latest
 
     def _adapt_material_input(
         self,

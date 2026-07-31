@@ -9,11 +9,11 @@ import subprocess
 import sys
 
 import threading
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from supabase import create_client, Client
+from ..time_utils import beijing_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -277,24 +277,60 @@ class SupabaseStore:
     def _legacy_upsert_item(self, item: dict) -> str:
         """插入或更新一条竞赛记录。去重键 = url + source。返回 'new' | 'updated'。
 
-        新记录同时写入 collected_at 和 updated_at；已有记录（同 url + source）
-        只刷新 updated_at，保留原始 collected_at，确保新鲜度计算不偏离。
+        新记录同时写入 collected_at 和 updated_at。
+        已有记录（同 url + source）：用新数据补充空的字段（回填缺失的 regist_end 等），
+        已有值的字段不覆盖。
         """
         row = self._to_row(item)
-        now = datetime.now().isoformat()
+        now = beijing_now_iso()
         url = item["url"]
         source = item["source"]
 
         if self.exists(url, source):
-            resp = (
+            # 取出现有记录，只回填空字段
+            existing = (
                 self.client.table("competitions")
-                .update({"updated_at": now})
+                .select("*")
                 .eq("url", url)
                 .eq("source", source)
+                .limit(1)
                 .execute()
             )
-            if resp.data:
-                logger.info("Supabase 更新: %s", item.get("title", "")[:40])
+            if existing.data:
+                existing_row = existing.data[0]
+                patch = {"updated_at": now}
+                # 只补充现有记录为空的字段；description 取更长的
+                for field in FIELDS:
+                    existing_val = existing_row.get(field)
+                    new_val = row.get(field)
+                    if field == "description":
+                        old_len = len(existing_val) if isinstance(existing_val, str) else 0
+                        new_len = len(new_val) if isinstance(new_val, str) else 0
+                        if new_len > old_len:
+                            patch[field] = new_val
+                        continue
+                    is_empty = (
+                        existing_val is None
+                        or existing_val == ""
+                        or existing_val == []
+                    )
+                    is_non_empty = (
+                        new_val is not None
+                        and new_val != ""
+                        and new_val != []
+                    )
+                    if is_empty and is_non_empty:
+                        patch[field] = new_val
+                self.client.table("competitions") \
+                    .update(patch) \
+                    .eq("url", url) \
+                    .eq("source", source) \
+                    .execute()
+                if len(patch) > 1:
+                    logger.info("Supabase 回填 %d 个字段: %s",
+                                len(patch) - 1, item.get("title", "")[:40])
+                else:
+                    logger.info("Supabase 更新 (无新字段): %s", item.get("title", "")[:40])
             return "updated"
 
         row["collected_at"] = now
@@ -320,7 +356,7 @@ class SupabaseStore:
     ) -> dict:
         """Upsert raw data and report new/changed/unchanged."""
         row = self._to_row(item)
-        now = datetime.now().isoformat()
+        now = beijing_now_iso()
         content_hash = self._content_hash(item)
         existing = (
             self.client.table("competitions")
@@ -376,7 +412,7 @@ class SupabaseStore:
         *,
         error: str | None = None,
     ) -> None:
-        now = datetime.now().isoformat()
+        now = beijing_now_iso()
         if error:
             values = {
                 "extraction_status": "failed",
@@ -392,7 +428,8 @@ class SupabaseStore:
             }
             for source_field, column in {
                 "title": "title",
-                "summary": "description",
+                "summary": "summary",
+                "description": "description",
                 "organizer": "organizer",
                 "deadline": "regist_end",
                 "registration_time": "regist_start",
@@ -414,7 +451,7 @@ class SupabaseStore:
             "status": status,
             "trigger_type": trigger_type,
             "trigger_ip_hash": trigger_ip_hash,
-            "started_at": datetime.now().isoformat(),
+            "started_at": beijing_now_iso(),
         }).execute()
         return response.data[0] if response.data else {}
 
@@ -429,7 +466,7 @@ class SupabaseStore:
 
     def get_active_refresh_job(self) -> dict | None:
         result = self.client.table("refresh_jobs").select("*").in_(
-            "status", ["queued", "running"]
+            "status", ["queued", "dispatched", "running"]
         ).order("id", desc=True).limit(1).execute()
         return result.data[0] if result.data else None
 
@@ -474,25 +511,25 @@ class SupabaseStore:
         return all_rows
 
     def delete_expired(self) -> int:
-        """删除 contest_end 已明确过期的竞赛，返回删除条数。
+        """删除 regist_end 已明确过期的竞赛，返回删除条数。
 
-        仅删除 contest_end 非空、可解析且日期 < 今天的条目。
-        contest_end 为空或无法解析的保留，避免误删。
+        仅删除 regist_end 非空、可解析且日期 < 今天的条目。
+        regist_end 为空或无法解析的保留，避免误删。
         """
         from datetime import date
         today = date.today()
         deleted = 0
 
-        # 先查全表 contest_end（轻量字段），找到过期 ID
+        # 先查全表 regist_end（轻量字段），找到过期 ID
         result = (
             self.client.table("competitions")
-            .select("id,contest_end")
+            .select("id,regist_end")
             .limit(2000)
             .execute()
         )
         expired_ids = []
         for row in (result.data or []):
-            end_str = str(row.get("contest_end", "")).strip()
+            end_str = str(row.get("regist_end", "")).strip()
             if not end_str:
                 continue
             try:
@@ -521,7 +558,7 @@ class SupabaseStore:
                 "task_id": task_id,
                 "source": source,
                 "status": "running",
-                "started_at": datetime.now().isoformat(),
+                "started_at": beijing_now_iso(),
             })
             .execute()
         )
@@ -530,7 +567,7 @@ class SupabaseStore:
 
     def update_crawl_log(self, log_id: int, **kwargs):
         if "finished_at" not in kwargs:
-            kwargs["finished_at"] = datetime.now().isoformat()
+            kwargs["finished_at"] = beijing_now_iso()
         (
             self.client.table("crawl_logs")
             .update(kwargs)
@@ -603,9 +640,9 @@ class SupabaseStore:
 
     @staticmethod
     def filter_active(items: list[dict]) -> list[dict]:
-        """过滤已过期的竞赛（contest_end 日期已过今天）。
+        """过滤已过期的竞赛（regist_end 日期已过今天）。
 
-        只过滤能明确判断为过期的条目：contest_end 为空或无法解析
+        只过滤能明确判断为过期的条目：regist_end 为空或无法解析
         的保留，避免误删有效数据。
         """
         from datetime import date
@@ -613,7 +650,7 @@ class SupabaseStore:
         kept: list[dict] = []
         today = date.today()
         for it in items:
-            end_str = str(it.get("contest_end", "")).strip()
+            end_str = str(it.get("regist_end", "")).strip()
             if not end_str:
                 kept.append(it)
                 continue
@@ -709,7 +746,19 @@ class SupabaseStore:
         return scores
 
     def _try_local_embedding(self, candidates: list[dict], user_intent: str) -> Optional[list[float]]:
-        """本机 embedding（常驻子进程，模型只加载一次）。"""
+        """Run the optional local embedding worker.
+
+        The ONNX model runs in a child process and can push a small web
+        instance over its memory limit.  It is therefore opt-in; callers
+        transparently fall back to the lightweight TF-IDF ranker.
+        """
+        enabled = os.getenv("ENABLE_LOCAL_EMBEDDING", "").strip().lower()
+        if enabled not in {"1", "true", "yes", "on"}:
+            logger.info(
+                "Local embedding is disabled; using the lightweight ranking fallback."
+            )
+            return None
+
         worker = Path(__file__).resolve().parent / "_embedding_worker.py"
         if not worker.exists():
             print("[supabase_store] _embedding_worker.py 不存在", flush=True)

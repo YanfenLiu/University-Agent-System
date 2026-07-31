@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import api
 from agents.main_agent import MainAgent
 from agents.refresh_service import RefreshService
+from agents.info_collect.supabase_store import SupabaseStore
 
 
 def test_recommendation_skips_collect_and_extract_without_raw_text():
@@ -130,3 +131,94 @@ def test_refresh_api_returns_existing_job_without_dispatch(monkeypatch):
     assert result.status == "already_running"
     assert result.job_id == 9
     assert dispatched == []
+
+
+def test_queued_refresh_job_expires_after_ten_minutes():
+    now = datetime(2026, 7, 30, 6, 0, tzinfo=timezone.utc)
+
+    assert api._refresh_job_is_stale(
+        {
+            "status": "queued",
+            "started_at": "2026-07-30T05:49:59+00:00",
+        },
+        now,
+    )
+    assert not api._refresh_job_is_stale(
+        {
+            "status": "queued",
+            "started_at": "2026-07-30T05:55:00+00:00",
+        },
+        now,
+    )
+
+
+def test_refresh_api_marks_successful_dispatch(monkeypatch):
+    class FakeStore:
+        def __init__(self):
+            self.updates = []
+
+        def get_active_refresh_job(self):
+            return None
+
+        def get_recent_ip_refresh(self, _ip_hash, _since):
+            return None
+
+        def create_refresh_job(self, *_args, **_kwargs):
+            return {"id": 12}
+
+        def update_refresh_job(self, job_id, **values):
+            self.updates.append((job_id, values))
+
+    store = FakeStore()
+    dispatched = []
+    monkeypatch.setattr(api, "_refresh_store", lambda: store)
+    monkeypatch.setattr(api, "_dispatch_refresh_workflow", dispatched.append)
+    request = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
+
+    result = api.start_competition_refresh(request)
+
+    assert result.status == "accepted"
+    assert result.job_id == 12
+    assert dispatched == [12]
+    assert store.updates == [(12, {"status": "dispatched"})]
+
+
+def test_local_embedding_is_disabled_by_default(monkeypatch):
+    class FailingWorker:
+        def compute(self, *_args, **_kwargs):
+            raise AssertionError("the heavyweight worker must not start by default")
+
+    monkeypatch.delenv("ENABLE_LOCAL_EMBEDDING", raising=False)
+    store = SupabaseStore.__new__(SupabaseStore)
+    store._embed_worker = FailingWorker()
+
+    assert store._try_local_embedding([{"title": "AI competition"}], "AI") is None
+
+
+def test_local_embedding_can_be_enabled_explicitly(monkeypatch):
+    class FakeWorker:
+        def compute(self, *_args, **_kwargs):
+            return [88.0]
+
+    monkeypatch.setenv("ENABLE_LOCAL_EMBEDDING", "true")
+    store = SupabaseStore.__new__(SupabaseStore)
+    store._embed_worker = FakeWorker()
+
+    assert store._try_local_embedding([{"title": "AI competition"}], "AI") == [88.0]
+
+
+def test_recommendation_query_uses_durable_profile_instead_of_latest_reply():
+    query = MainAgent._recommendation_search_query({
+        "user_input": "没有特殊偏好",
+        "user_profile": {
+            "major": "计算机科学与技术",
+            "interests": ["人工智能"],
+            "skills": ["Python"],
+            "development_goals": [],
+        },
+    })
+
+    assert "计算机科学与技术" in query
+    assert "人工智能" in query
+    assert "Python" in query
+    assert "没有特殊偏好" not in query

@@ -6,6 +6,7 @@ export interface SupabaseCompetitionRow {
   url: string;
   source?: string;
   description?: string;
+  summary?: string;
   organizer?: string;
   regist_end?: string;
   contest_end?: string;
@@ -22,7 +23,7 @@ export function mapRowToCompetition(row: SupabaseCompetitionRow): Competition {
   const difficulty = mapDifficulty(row.level);
   const deadline = row.regist_end || row.contest_end || '待核实';
   const tags = buildTags(row);
-  const summary = row.description || '';
+  const summary = row.summary || row.description || '';
   const status = inferStatus(row.regist_end, row.contest_end);
 
   return {

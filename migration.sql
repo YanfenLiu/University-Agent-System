@@ -75,3 +75,7 @@ CREATE TABLE IF NOT EXISTS refresh_jobs (
 
 CREATE INDEX IF NOT EXISTS idx_refresh_jobs_status ON refresh_jobs (status);
 CREATE INDEX IF NOT EXISTS idx_refresh_jobs_finished_at ON refresh_jobs (finished_at DESC);
+
+-- Keep timestamptz columns timezone-safe while displaying new database sessions
+-- (including Supabase Table Editor sessions) in Beijing time.
+ALTER DATABASE postgres SET timezone TO 'Asia/Shanghai';

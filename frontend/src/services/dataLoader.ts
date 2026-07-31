@@ -2,28 +2,27 @@ import type { Competition } from './competitions';
 import { mapRowToCompetition, type SupabaseCompetitionRow } from './competitionMapper';
 import { request } from './apiClient';
 
-const CACHE_KEY = 'backend_competitions_cache_v1';
 let cached: Competition[] | null = null;
+let lastFetchTime = 0;
+const CACHE_TTL = 5 * 60 * 1000; // 5 分钟后自动刷新
 
 /**
- * 页面首次加载优先使用上次从后端成功同步的浏览器缓存。
- * 没有缓存时才访问 Render/Supabase，避免每次刷新都等待网络。
+ * 加载竞赛数据：优先返回缓存，缓存过期时静默刷新。
+ * 调用方应处理 loading 状态。
  */
 export async function fetchCompetitions(): Promise<Competition[]> {
-  if (cached) return cached;
+  const now = Date.now();
 
-  const stored = readStoredCache();
-  if (stored) {
-    cached = stored;
-    return stored;
+  // 缓存未过期，直接返回
+  if (cached && now - lastFetchTime < CACHE_TTL) {
+    return cached;
   }
 
   return refreshCompetitions();
 }
 
 /**
- * 强制从 Render 后端重新读取 Supabase，并同步内存与浏览器缓存。
- * 未来“更新竞赛库”按钮应在后端更新完成后调用此函数。
+ * 强制从后端重新拉取，刷新缓存。
  */
 export async function refreshCompetitions(): Promise<Competition[]> {
   const pageSize = 500;
@@ -39,26 +38,8 @@ export async function refreshCompetitions(): Promise<Competition[]> {
   }
 
   cached = rows.map(mapRowToCompetition);
-  localStorage.setItem(
-    CACHE_KEY,
-    JSON.stringify({
-      items: cached,
-      updatedAt: new Date().toISOString(),
-    }),
-  );
+  lastFetchTime = Date.now();
   return cached;
-}
-
-function readStoredCache(): Competition[] | null {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { items?: Competition[] };
-    return Array.isArray(parsed.items) ? parsed.items : null;
-  } catch {
-    localStorage.removeItem(CACHE_KEY);
-    return null;
-  }
 }
 
 interface CompetitionPage {

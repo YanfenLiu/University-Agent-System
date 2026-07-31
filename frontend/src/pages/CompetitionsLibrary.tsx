@@ -1,12 +1,21 @@
-import { Col, Input, Row, Tag, Typography, Spin, Alert, Result, message } from 'antd';
-import { useMemo, useState } from 'react';
+import { Col, Input, Row, Tag, Typography, Spin, Alert, Result, message, Pagination } from 'antd';
+import { useMemo, useState, useEffect } from 'react';
 
 import { CompetitionCard } from '../components/CompetitionCard';
 import { RefreshButton } from '../components/RefreshButton';
-import { useCompetitionsData, useCompetitionsLoading, useCompetitionsError } from '../contexts/CompetitionsDataContext';
+import {
+  useCompetitionsData,
+  useCompetitionsLoading,
+  useCompetitionsError,
+  useRefreshCompetitions,
+} from '../contexts/CompetitionsDataContext';
 import { useCompetitions } from '../contexts/CompetitionsContext';
+import { useAuth } from '../contexts/AuthContext';
 import { designTokens } from '../styles/tokens';
-import { startCompetitionRefresh } from '../services/refresh';
+import {
+  getCompetitionRefreshStatus,
+  startCompetitionRefresh,
+} from '../services/refresh';
 
 import { SearchOutlined, TrophyOutlined } from '@ant-design/icons';
 
@@ -19,8 +28,41 @@ export function CompetitionsLibrary() {
   const error = useCompetitionsError();
   const [searchText, setSearchText] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 24;
   const [refreshing, setRefreshing] = useState(false);
+  const refreshCompetitionList = useRefreshCompetitions();
   const { addCompetition, isJoined } = useCompetitions();
+  const { isAdmin } = useAuth();
+
+  const waitForRefresh = async (jobId: number) => {
+    const deadline = Date.now() + 30 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      const statusResult = await getCompetitionRefreshStatus();
+      const job = statusResult.job;
+      if (!job || job.id !== jobId) continue;
+
+      if (job.status === 'completed' || job.status === 'partial') {
+        await refreshCompetitionList();
+        const summary = [
+          `新增 ${job.items_new || 0}`,
+          `变化 ${job.items_changed || 0}`,
+          `删除 ${job.items_deleted || 0}`,
+        ].join('，');
+        if (job.status === 'partial') {
+          message.warning(`刷新部分完成（${summary}），竞赛库已重新加载。`);
+        } else {
+          success(`刷新完成（${summary}），竞赛库已重新加载。`);
+        }
+        return;
+      }
+      if (job.status === 'failed') {
+        throw new Error(job.error_message || '后台刷新任务失败');
+      }
+    }
+    message.info('后台任务仍在运行，请稍后重新打开竞赛库查看。');
+  };
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -28,6 +70,9 @@ export function CompetitionsLibrary() {
       const result = await startCompetitionRefresh();
       if (result.status === 'rate_limited') {
         message.warning(result.message);
+      } else if (result.job_id) {
+        success(result.message);
+        await waitForRefresh(result.job_id);
       } else {
         success(result.message);
       }
@@ -96,6 +141,15 @@ export function CompetitionsLibrary() {
     return list;
   }, [competitions, searchText, selectedTag]);
 
+  // 分页切片
+  const paged = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, page]);
+
+  // 搜索或标签切换时重置到第一页
+  useEffect(() => setPage(1), [searchText, selectedTag]);
+
   return (
     <div className="fade-in">
       {/* 页头 */}
@@ -110,11 +164,13 @@ export function CompetitionsLibrary() {
         >
           <TrophyOutlined style={{ color: designTokens.colorPrimary }} />
           竞赛库
-          <RefreshButton
-            onRefresh={handleRefresh}
-            loading={refreshing}
-            style={{ marginLeft: 'auto' }}
-          />
+          {isAdmin && (
+            <RefreshButton
+              onRefresh={handleRefresh}
+              loading={refreshing}
+              style={{ marginLeft: 'auto' }}
+            />
+          )}
         </Typography.Title>
         <Typography.Text type="secondary" style={{ fontSize: 14 }}>
           共收录 <strong style={{ color: designTokens.colorPrimary }}>{competitions.length}</strong> 个竞赛资源
@@ -183,7 +239,7 @@ export function CompetitionsLibrary() {
 
       {/* 竞赛卡片网格 */}
       <Row gutter={[designTokens.spacing.lg, designTokens.spacing.lg]}>
-        {filtered.map((item) => (
+        {paged.map((item) => (
           <Col xs={24} sm={12} lg={8} xl={6} key={item.id}>
             <CompetitionCard
               competition={item}
@@ -197,6 +253,19 @@ export function CompetitionsLibrary() {
           </Col>
         ))}
       </Row>
+
+      {/* 分页器 */}
+      {filtered.length > PAGE_SIZE && (
+        <div style={{ textAlign: 'center', marginTop: 24 }}>
+          <Pagination
+            current={page}
+            pageSize={PAGE_SIZE}
+            total={filtered.length}
+            onChange={setPage}
+            showSizeChanger={false}
+          />
+        </div>
+      )}
 
       {/* 空状态提示 */}
       {filtered.length === 0 && (
