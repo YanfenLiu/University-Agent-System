@@ -5,6 +5,7 @@ import { CompetitionCard } from '../components/CompetitionCard';
 import { RefreshButton } from '../components/RefreshButton';
 import { useCompetitionsData, useCompetitionsLoading, useCompetitionsError } from '../contexts/CompetitionsDataContext';
 import { useCompetitions } from '../contexts/CompetitionsContext';
+import { useAuth } from '../contexts/AuthContext';
 import { designTokens } from '../styles/tokens';
 import { startCompetitionRefresh } from '../services/refresh';
 
@@ -21,6 +22,7 @@ export function CompetitionsLibrary() {
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const { addCompetition, isJoined } = useCompetitions();
+  const { isAdmin } = useAuth();
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -110,11 +112,13 @@ export function CompetitionsLibrary() {
         >
           <TrophyOutlined style={{ color: designTokens.colorPrimary }} />
           竞赛库
-          <RefreshButton
-            onRefresh={handleRefresh}
-            loading={refreshing}
-            style={{ marginLeft: 'auto' }}
-          />
+          {isAdmin && (
+            <RefreshButton
+              onRefresh={handleRefresh}
+              loading={refreshing}
+              style={{ marginLeft: 'auto' }}
+            />
+          )}
         </Typography.Title>
         <Typography.Text type="secondary" style={{ fontSize: 14 }}>
           共收录 <strong style={{ color: designTokens.colorPrimary }}>{competitions.length}</strong> 个竞赛资源

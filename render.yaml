@@ -34,5 +34,15 @@ services:
       # Database retrieval falls back to the lightweight TF-IDF ranker.
       - key: ENABLE_LOCAL_EMBEDDING
         value: "false"
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "15"
+      - key: JWT_REFRESH_TOKEN_EXPIRE_DAYS
+        value: "7"
+      - key: ALLOWED_ORIGINS
+        value: https://saizhitong.example.com
       # Existing deployments may still use VITE_SUPABASE_URL and
       # VITE_SUPABASE_ANON_KEY; api.py accepts both naming schemes.

@@ -1,7 +1,10 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { sendMessage } from "../services";
 import type { Competition, DimensionalScores } from "../../../services/competitions";
 import type { Message, AgentStep, UserProfile, AgentResponse } from "../types";
+import { useAuth } from "../../../contexts/AuthContext";
+import { request } from "../../../services/apiClient";
+import type { ConversationDetail } from "../../../services/authTypes";
 
 const WELCOME_MESSAGE =
   "你好！我是 **赛智通 AI 竞赛智能体** 🤖\n\n" +
@@ -60,10 +63,41 @@ function mapRecommendations(rawRows: unknown): Competition[] {
 }
 
 export function useAgentChat() {
+  const { user } = useAuth();
+  const prevUserId = useRef<string | undefined>(user?.id);
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+
+  const triggerHistoryRefresh = useCallback(() => {
+    setHistoryRefreshKey((k) => k + 1);
+  }, []);
+
+  const resetToWelcome = useCallback(() => {
+    setConversationId(null);
+    setMessages([{ role: "assistant" as const, content: WELCOME_MESSAGE }]);
+    setStateSnapshot({});
+    setShowSuggestions(true);
+    setAgentSteps([
+      { label: "等待用户输入", status: "wait" as const, detail: "请描述你的背景和需求" },
+      { label: "分析用户画像", status: "wait" as const, detail: "" },
+      { label: "匹配竞赛数据库", status: "wait" as const, detail: "" },
+      { label: "评估匹配程度", status: "wait" as const, detail: "" },
+      { label: "生成推荐方案", status: "wait" as const, detail: "" },
+    ]);
+  }, []);
+
+  // 用户登出或切换账号时重置对话
+  useEffect(() => {
+    if (prevUserId.current !== user?.id) {
+      prevUserId.current = user?.id;
+      resetToWelcome();
+    }
+  }, [user?.id, resetToWelcome]);
+
   const inputRef = useRef<any>(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(true);
+  const [conversationId, setConversationId] = useState<string | null>(null);
 
   const [messages, setMessages] = useState<Message[]>([
     { role: "assistant", content: WELCOME_MESSAGE },
@@ -88,6 +122,59 @@ export function useAgentChat() {
       : "",
     matched: Boolean(stateSnapshot.major),
   };
+
+  // ---- conversation persistence ----
+  const saveConversation = useCallback(async (
+    convId: string | null,
+    msgs: Message[],
+    snapshot: Record<string, unknown>,
+  ) => {
+    if (!user) return;
+    const title = msgs.find((m) => m.role === "user")?.content?.slice(0, 30) || "新对话";
+    try {
+      const res = await request<{ id: string }>("/api/conversations", {
+        method: "POST",
+        body: {
+          conversation_id: convId,
+          title,
+          state_snapshot: snapshot,
+          messages: msgs,
+        },
+      });
+      if (!convId && res?.id) {
+        setConversationId(res.id);
+      }
+    } catch {
+      // silent
+    }
+  }, [user]);
+
+  const loadConversation = useCallback(async (id: string) => {
+    try {
+      const res = await request<{ conversation: ConversationDetail }>(`/api/conversations/${id}`);
+      const conv = res.conversation;
+      setConversationId(conv.id);
+      setMessages(conv.messages as Message[]);
+      setStateSnapshot(conv.state_snapshot as Record<string, unknown>);
+      setShowSuggestions(false);
+      // Reset agent steps to reflect loaded state
+      setAgentSteps([
+        { label: "已加载历史对话", status: "done", detail: `对话: ${conv.title}` },
+        { label: "分析用户画像", status: "wait", detail: "" },
+        { label: "匹配竞赛数据库", status: "wait", detail: "" },
+        { label: "评估匹配程度", status: "wait", detail: "" },
+        { label: "生成推荐方案", status: "wait", detail: "" },
+      ]);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const newConversation = useCallback(() => {
+    resetToWelcome();
+    triggerHistoryRefresh();
+  }, [resetToWelcome, triggerHistoryRefresh]);
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [shouldScroll, setShouldScroll] = useState(false);
@@ -157,6 +244,12 @@ export function useAgentChat() {
 
       updateAgentStep(1, "done", "MainAgent 已完成语义理解");
 
+      // Auto-save conversation for logged-in users
+      const updatedMessages = [...messages, { role: "user" as const, content: text }, { role: "assistant" as const, content: result.response.text, files: result.response.files }];
+      saveConversation(conversationId, updatedMessages, result.state_snapshot).then(() => {
+        triggerHistoryRefresh();
+      });
+
       const responseType = result.response.type;
       const hasRecommendations =
         Array.isArray(result.response.recommendations) &&
@@ -213,6 +306,7 @@ export function useAgentChat() {
     setInput,
     loading,
     showSuggestions,
+    conversationId,
     messages,
     agentSteps,
     userProfile,
@@ -220,6 +314,9 @@ export function useAgentChat() {
     messagesContainerRef,
     handleSend,
     handleSuggestionClick,
+    loadConversation,
+    newConversation,
+    historyRefreshKey,
     recommendedCompetitions,
   };
 }
