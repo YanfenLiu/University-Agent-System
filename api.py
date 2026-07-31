@@ -865,6 +865,56 @@ def admin_update_user(
     return {"success": True}
 
 
+@app.get("/api/admin/conversation-users")
+def admin_conversation_users(
+    current_admin: dict = Depends(get_current_admin),
+) -> dict:
+    """返回有对话记录的用户列表（去重，含对话数量）"""
+    url, key = _supabase_api_config()
+    client = create_client(url, key)
+
+    # 按 user_id 分组，取每个用户的对话数 + 最近对话时间
+    convs = client.table("conversations") \
+        .select("user_id,updated_at") \
+        .order("updated_at", desc=True) \
+        .limit(2000) \
+        .execute()
+
+    # 收集所有 user_id
+    user_ids = list(set(row["user_id"] for row in (convs.data or [])))
+    if not user_ids:
+        return {"success": True, "items": []}
+
+    # 批量查用户名
+    profiles = client.table("profiles").select("id,username,display_name") \
+        .in_("id", user_ids).execute()
+    profile_map = {p["id"]: p for p in (profiles.data or [])}
+
+    # 统计每个用户的对话数 + 最后活跃时间
+    from collections import defaultdict
+    counts = defaultdict(int)
+    last_active = {}
+    for row in (convs.data or []):
+        uid = row["user_id"]
+        counts[uid] += 1
+        if uid not in last_active:
+            last_active[uid] = str(row.get("updated_at", ""))
+
+    items = []
+    for uid in user_ids:
+        p = profile_map.get(uid, {})
+        items.append({
+            "user_id": uid,
+            "username": p.get("username", uid[:8]),
+            "display_name": p.get("display_name", ""),
+            "conversation_count": counts.get(uid, 0),
+            "last_active": last_active.get(uid, ""),
+        })
+
+    items.sort(key=lambda x: x["last_active"], reverse=True)
+    return {"success": True, "items": items}
+
+
 @app.get("/api/admin/conversations")
 def admin_list_conversations(
     page: int = Query(1, ge=1),

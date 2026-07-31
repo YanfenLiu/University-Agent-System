@@ -478,6 +478,12 @@ class SupabaseStore:
         ).order("id", desc=True).limit(1).execute()
         return result.data[0] if result.data else None
 
+    def list_refresh_jobs(self, limit: int = 20, offset: int = 0) -> list[dict]:
+        result = self.client.table("refresh_jobs").select("*").order(
+            "id", desc=True
+        ).range(offset, offset + limit - 1).execute()
+        return result.data or []
+
     def get_all_items(self, source: Optional[str] = None) -> list[dict]:
         """返回所有竞赛记录的轻量字段（用于缓存检查 + embedding）。
 
