@@ -292,6 +292,26 @@ def _dispatch_refresh_workflow(job_id: int) -> None:
             raise RuntimeError(f"GitHub workflow dispatch returned {response.status}.")
 
 
+def _refresh_job_is_stale(
+    job: dict[str, Any],
+    now: datetime | None = None,
+) -> bool:
+    """Return whether an active refresh job no longer owns the dispatch lock."""
+    try:
+        started_at = datetime.fromisoformat(str(job.get("started_at")))
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return True
+
+    current = now or datetime.now(timezone.utc)
+    status = str(job.get("status") or "")
+    # queued means GitHub has not acknowledged the dispatch yet.  Do not let
+    # an interrupted API request block the button for a full hour.
+    timeout = timedelta(minutes=10) if status == "queued" else timedelta(hours=1)
+    return current - started_at > timeout
+
+
 @app.post("/api/competitions/refresh", response_model=RefreshResponse, status_code=202)
 def start_competition_refresh(
     request: Request,
@@ -319,7 +339,9 @@ def start_competition_refresh(
                 success=True,
                 status="already_running",
                 job_id=int(active["id"]),
-                message="竞赛数据库正在刷新，请稍后查看。",
+                message=(
+                    f"刷新任务 #{int(active['id'])} 正在处理中，请稍后查看。"
+                ),
             )
 
     ip_hash = _client_ip_hash(request)
@@ -338,6 +360,7 @@ def start_competition_refresh(
     job_id = int(job["id"])
     try:
         _dispatch_refresh_workflow(job_id)
+        store.update_refresh_job(job_id, status="dispatched")
     except Exception as exc:
         store.update_refresh_job(
             job_id,
@@ -355,7 +378,9 @@ def start_competition_refresh(
         success=True,
         status="accepted",
         job_id=job_id,
-        message="已开始刷新，请等待几分钟后刷新网站。",
+        message=(
+            f"已提交刷新任务 #{job_id}，请等待几分钟后刷新网站。"
+        ),
     )
 
 

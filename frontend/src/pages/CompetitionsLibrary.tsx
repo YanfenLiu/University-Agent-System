@@ -3,11 +3,19 @@ import { useMemo, useState } from 'react';
 
 import { CompetitionCard } from '../components/CompetitionCard';
 import { RefreshButton } from '../components/RefreshButton';
-import { useCompetitionsData, useCompetitionsLoading, useCompetitionsError } from '../contexts/CompetitionsDataContext';
+import {
+  useCompetitionsData,
+  useCompetitionsLoading,
+  useCompetitionsError,
+  useRefreshCompetitions,
+} from '../contexts/CompetitionsDataContext';
 import { useCompetitions } from '../contexts/CompetitionsContext';
 import { useAuth } from '../contexts/AuthContext';
 import { designTokens } from '../styles/tokens';
-import { startCompetitionRefresh } from '../services/refresh';
+import {
+  getCompetitionRefreshStatus,
+  startCompetitionRefresh,
+} from '../services/refresh';
 
 import { SearchOutlined, TrophyOutlined } from '@ant-design/icons';
 
@@ -21,8 +29,38 @@ export function CompetitionsLibrary() {
   const [searchText, setSearchText] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const refreshCompetitionList = useRefreshCompetitions();
   const { addCompetition, isJoined } = useCompetitions();
   const { isAdmin } = useAuth();
+
+  const waitForRefresh = async (jobId: number) => {
+    const deadline = Date.now() + 30 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      const statusResult = await getCompetitionRefreshStatus();
+      const job = statusResult.job;
+      if (!job || job.id !== jobId) continue;
+
+      if (job.status === 'completed' || job.status === 'partial') {
+        await refreshCompetitionList();
+        const summary = [
+          `新增 ${job.items_new || 0}`,
+          `变化 ${job.items_changed || 0}`,
+          `删除 ${job.items_deleted || 0}`,
+        ].join('，');
+        if (job.status === 'partial') {
+          message.warning(`刷新部分完成（${summary}），竞赛库已重新加载。`);
+        } else {
+          success(`刷新完成（${summary}），竞赛库已重新加载。`);
+        }
+        return;
+      }
+      if (job.status === 'failed') {
+        throw new Error(job.error_message || '后台刷新任务失败');
+      }
+    }
+    message.info('后台任务仍在运行，请稍后重新打开竞赛库查看。');
+  };
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -30,6 +68,9 @@ export function CompetitionsLibrary() {
       const result = await startCompetitionRefresh();
       if (result.status === 'rate_limited') {
         message.warning(result.message);
+      } else if (result.job_id) {
+        success(result.message);
+        await waitForRefresh(result.job_id);
       } else {
         success(result.message);
       }
