@@ -64,7 +64,6 @@ function AppShell() {
             activeKey={activeKey}
             onChange={setActiveKey}
             items={tabItems}
-            destroyInactiveTabPane={false}
           />
         </AppLayout>
       </NavigationProvider>

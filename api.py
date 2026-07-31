@@ -210,7 +210,7 @@ def list_competitions(
             create_client(url, key)
             .table("competitions")
             .select(
-                "id,title,url,source,description,organizer,"
+                "id,title,url,source,description,summary,organizer,"
                 "regist_end,contest_end,category,level,collected_at,updated_at",
                 count="exact",
             )
@@ -741,7 +741,7 @@ def list_saved_competitions(
     for i in range(0, len(ids), 50):
         batch = ids[i:i + 50]
         comps = client.table("competitions") \
-            .select("id,title,url,description,organizer,regist_end,contest_end,category,level") \
+            .select("id,title,url,description,summary,organizer,regist_end,contest_end,category,level") \
             .in_("id", batch) \
             .execute()
         all_comps.extend(comps.data or [])
@@ -756,7 +756,7 @@ def list_saved_competitions(
         items.append({
             "id": comp["id"],
             "name": comp.get("title", ""),
-            "summary": comp.get("description", ""),
+            "summary": comp.get("summary") or comp.get("description", ""),
             "difficulty": _map_difficulty(comp.get("level", "")),
             "deadline": comp.get("regist_end") or comp.get("contest_end", ""),
             "officialUrl": comp.get("url", ""),

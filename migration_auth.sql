@@ -93,3 +93,8 @@ CREATE TABLE IF NOT EXISTS login_attempts (
 );
 CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts (ip_address, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_login_attempts_user ON login_attempts (username, created_at DESC);
+
+-- ============================================================
+-- 7. competitions 表补 summary 列
+-- ============================================================
+ALTER TABLE competitions ADD COLUMN IF NOT EXISTS summary TEXT DEFAULT '';

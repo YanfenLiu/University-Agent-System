@@ -1,5 +1,5 @@
-import { Col, Input, Row, Tag, Typography, Spin, Alert, Result, message } from 'antd';
-import { useMemo, useState } from 'react';
+import { Col, Input, Row, Tag, Typography, Spin, Alert, Result, message, Pagination } from 'antd';
+import { useMemo, useState, useEffect } from 'react';
 
 import { CompetitionCard } from '../components/CompetitionCard';
 import { RefreshButton } from '../components/RefreshButton';
@@ -28,6 +28,8 @@ export function CompetitionsLibrary() {
   const error = useCompetitionsError();
   const [searchText, setSearchText] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 24;
   const [refreshing, setRefreshing] = useState(false);
   const refreshCompetitionList = useRefreshCompetitions();
   const { addCompetition, isJoined } = useCompetitions();
@@ -139,6 +141,15 @@ export function CompetitionsLibrary() {
     return list;
   }, [competitions, searchText, selectedTag]);
 
+  // 分页切片
+  const paged = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, page]);
+
+  // 搜索或标签切换时重置到第一页
+  useEffect(() => setPage(1), [searchText, selectedTag]);
+
   return (
     <div className="fade-in">
       {/* 页头 */}
@@ -228,7 +239,7 @@ export function CompetitionsLibrary() {
 
       {/* 竞赛卡片网格 */}
       <Row gutter={[designTokens.spacing.lg, designTokens.spacing.lg]}>
-        {filtered.map((item) => (
+        {paged.map((item) => (
           <Col xs={24} sm={12} lg={8} xl={6} key={item.id}>
             <CompetitionCard
               competition={item}
@@ -242,6 +253,19 @@ export function CompetitionsLibrary() {
           </Col>
         ))}
       </Row>
+
+      {/* 分页器 */}
+      {filtered.length > PAGE_SIZE && (
+        <div style={{ textAlign: 'center', marginTop: 24 }}>
+          <Pagination
+            current={page}
+            pageSize={PAGE_SIZE}
+            total={filtered.length}
+            onChange={setPage}
+            showSizeChanger={false}
+          />
+        </div>
+      )}
 
       {/* 空状态提示 */}
       {filtered.length === 0 && (
