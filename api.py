@@ -148,14 +148,14 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS：生产环境使用白名单，不可用 "*" + credentials
-_allowed = os.getenv("ALLOWED_ORIGINS", "*")
-allow_origins = [o.strip() for o in _allowed.split(",") if o.strip()]
+# CORS：指定允许的前端域名，Authorization 头不能用 "*" 通配符
+_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,https://yhrjkcz1.github.io")
+allow_origins = [o.strip() for o in _origins.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
