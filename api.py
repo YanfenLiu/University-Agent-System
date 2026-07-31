@@ -156,13 +156,13 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS：生产环境使用白名单，不可用 "*" + credentials
-_allowed = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173")
+_allowed = os.getenv("ALLOWED_ORIGINS", "*")
 allow_origins = [o.strip() for o in _allowed.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
