@@ -32,7 +32,7 @@ class CompetitionSearchService:
         return {
             **row,
             "title": row.get("title", ""),
-            "summary": row.get("description", ""),
+            "summary": row.get("summary") or row.get("description", ""),
             "deadline": row.get("regist_end", ""),
             "registration_time": row.get("regist_start", ""),
             "organizer": row.get("organizer", ""),
