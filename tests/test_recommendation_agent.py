@@ -29,6 +29,7 @@ from agents.ReAgent_New.utils import (  # noqa: E402
     load_config,
 )
 from agents.ReAgent_New.weights import normalize_weights  # noqa: E402
+from agents.ReAgent_New.copywriting import build_action, build_reason_template, build_risk  # noqa: E402
 from agents.main_agent import MainAgent  # noqa: E402
 
 
@@ -91,6 +92,44 @@ def _base_input(**overrides) -> dict:
     }
     payload.update(overrides)
     return payload
+
+
+def test_user_copy_does_not_expose_internal_scores_or_levels() -> None:
+    detail = {
+        "interest_score": 88,
+        "ability_score": 76,
+        "deadline_score": 82,
+        "team_score": 42,
+        "grade_score": 70,
+        "major_score": 65,
+    }
+
+    reason = build_reason_template(detail)
+    risk = build_risk(detail)
+    action = build_action("S", detail)
+    visible_copy = " ".join([reason, risk, action])
+
+    assert "分" not in visible_copy
+    assert "S" not in visible_copy
+    assert "匹配度" not in visible_copy
+    assert "强烈推荐" not in visible_copy
+    assert "立即" not in visible_copy
+
+
+def test_main_agent_user_copy_hides_comparison_score() -> None:
+    agent = MainAgent(config={})
+    answer = agent._build_comparison_answer(
+        [
+            {"title": "竞赛甲", "match_score": 92, "reason": "方向比较接近", "deadline": "2026-09-01"},
+            {"title": "竞赛乙", "match_score": 81, "reason": "可以作为备选", "deadline": "2026-10-01"},
+        ],
+        "比较一下",
+        {"development_goals": []},
+    )
+
+    assert "92" not in answer
+    assert "81" not in answer
+    assert "匹配分" not in answer
 
 
 def test_output_schema_and_sample() -> None:

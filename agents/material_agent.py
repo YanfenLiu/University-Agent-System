@@ -633,7 +633,7 @@ class MaterialAgent:
                 "agent_name": "material_agent",
                 "status": "failed",
                 "data": {},
-                "message": "Input validation failed.",
+                "message": "还缺少生成材料所需的信息，请补充后再试。",
                 "error": validation_error,
                 "next_action": None,
                 "metadata": self._make_metadata(),
@@ -661,7 +661,7 @@ class MaterialAgent:
                 "agent_name": "material_agent",
                 "status": "success",
                 "data": result,
-                "message": f"Material '{result.get('material_type', '')}' generated successfully.",
+                "message": "材料已经生成好了。",
                 "error": None,
                 "next_action": None,
                 "metadata": self._make_metadata(),
@@ -674,7 +674,7 @@ class MaterialAgent:
                 "agent_name": "material_agent",
                 "status": "failed",
                 "data": {},
-                "message": "Material generation failed.",
+                "message": "抱歉，材料暂时没有生成成功。你的信息已经保留，可以稍后再试。",
                 "error": {
                     "error_type": type(e).__name__,
                     "error_message": str(e),
@@ -1345,17 +1345,13 @@ class MaterialAgent:
             LLM 生成的文本内容
         """
         # ---- 真实 API 调用 ----
-        if not self.api_key or not self.api_base_url:
-            has_key = "YES" if self.api_key else "NO - set DEEPSEEK_API_KEY"
-            has_url = self.api_base_url or "NOT SET"
-            has_model = self.model_name or "NOT SET"
-            return (
-                f"# [Config Error] Cannot generate material\n\n"
-                f"> API Key: {has_key}\n"
-                f"> Base URL: {has_url}\n"
-                f"> Model: {has_model}\n\n"
-                f"Please check config.yaml or DEEPSEEK_API_KEY env var."
-            )
+        testing_config = self.config.get("testing", {}) if isinstance(self.config, dict) else {}
+        mock_enabled = bool(
+            isinstance(testing_config, dict)
+            and testing_config.get("mock_enabled", False)
+        ) or os.getenv("SAIZHITONG_MOCK_ENABLED", "").lower() in {"1", "true", "yes"}
+        if (not self.api_key or not self.api_base_url) and not mock_enabled:
+            raise RuntimeError("当前无法连接材料生成服务，请稍后重试。")
         if self.api_key and self.api_base_url:
             try:
                 client = OpenAI(
@@ -1382,17 +1378,7 @@ class MaterialAgent:
                 return content
 
             except Exception as e:
-                import traceback
-                has_key = "YES" if self.api_key else "NO"
-                return (
-                    f"# [API Error] Material generation failed\n\n"
-                    f"> API Key: {has_key}\n"
-                    f"> Base URL: {self.api_base_url}\n"
-                    f"> Model: {self.model_name}\n"
-                    f"> Error: {type(e).__name__}: {e}\n"
-                    f"> Traceback: {traceback.format_exc()[-300:]}\n\n"
-                    f"Please check network and API configuration."
-                )
+                raise RuntimeError("材料暂时没有生成成功，请稍后重试。") from e
 
         # ---- Mock 模式（API 未配置或调用失败时）----
         if output_sections is None:

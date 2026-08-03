@@ -5,11 +5,7 @@ import type { Message, AgentStep, UserProfile, AgentResponse } from "../types";
 import { useAuth } from "../../../contexts/AuthContext";
 import { request } from "../../../services/apiClient";
 import type { ConversationDetail } from "../../../services/authTypes";
-
-const WELCOME_MESSAGE =
-  "你好！我是 **赛智通 AI 竞赛智能体** 🤖\n\n" +
-  "我可以帮你分析专业背景、推荐适合的竞赛、规划参赛路线。\n\n" +
-  "请先告诉我你的专业和年级。";
+import { WELCOME_MESSAGE } from "../constants";
 
 function mapRecommendations(rawRows: unknown): Competition[] {
   const rows = Array.isArray(rawRows) ? rawRows : [];
@@ -39,12 +35,7 @@ function mapRecommendations(rawRows: unknown): Competition[] {
         officialUrl: rec.source_url || rec.url || "",
         reason: rec.reason || rec.summary || "",
         tags,
-        status:
-          rec.match_score != null && rec.match_score >= 80
-            ? "推荐"
-            : rec.deadline
-              ? "报名中"
-              : "热门",
+        status: rec.deadline ? "报名中" : "热门",
         match_score:
           rec.match_score != null ? Number(rec.match_score) : undefined,
         recommend_level: rec.recommend_level || undefined,
