@@ -1,4 +1,4 @@
-import { Button, Card, Typography } from 'antd';
+import { Button, Card, Progress, Typography } from 'antd';
 import { useState } from 'react';
 
 import { Competition } from '../services/competitions';
@@ -23,6 +23,27 @@ const statusType = {
   热门: 'warning',
   推荐: 'primary',
 } as const;
+
+/** 可向用户解释的细分匹配维度；总体分和推荐等级仍不展示。 */
+const dimLabelMap: Record<string, string> = {
+  major_score: '专业匹配',
+  interest_score: '兴趣契合',
+  ability_score: '能力要求',
+  experience_score: '经验匹配',
+  grade_score: '年级适应',
+  goal_score: '目标一致',
+  team_score: '组队形式',
+};
+
+const dimColorMap: Record<string, string> = {
+  major_score: '#1677ff',
+  interest_score: '#722ed1',
+  ability_score: '#13c2c2',
+  experience_score: '#eb2f96',
+  grade_score: '#fa8c16',
+  goal_score: '#52c41a',
+  team_score: '#2f54eb',
+};
 
 export function CompetitionCard({
   competition,
@@ -132,6 +153,57 @@ export function CompetitionCard({
             >
               {competition.reason}
             </Typography.Paragraph>
+          </div>
+        )}
+
+        {/* 细分维度有参考意义；仅在展开时展示，不显示总体分或推荐等级。 */}
+        {expanded && hasBackendData && competition.detail && (
+          <div style={{
+            background: '#fafafa',
+            borderRadius: 8,
+            padding: '10px 12px',
+            marginBottom: 8,
+          }}>
+            <Typography.Text style={{ fontSize: 12, fontWeight: 600, color: '#333', display: 'block', marginBottom: 6 }}>
+              专业匹配分析
+            </Typography.Text>
+            {Object.entries(dimLabelMap).map(([key, label]) => {
+              const value = competition.detail?.[key];
+              if (value == null || !Number.isFinite(Number(value))) return null;
+
+              const score = Math.max(0, Math.min(100, Math.round(Number(value))));
+              const color = dimColorMap[key] || '#1677ff';
+              return (
+                <div key={key} style={{ display: 'flex', alignItems: 'center', marginBottom: 4, gap: 8 }}>
+                  <span style={{
+                    width: 56,
+                    fontSize: 11,
+                    color: '#666',
+                    flexShrink: 0,
+                    textAlign: 'right',
+                  }}>
+                    {label}
+                  </span>
+                  <Progress
+                    percent={score}
+                    size={{ height: 8 }}
+                    strokeColor={color}
+                    trailColor="#e8e8e8"
+                    showInfo={false}
+                    style={{ flex: 1, margin: 0 }}
+                  />
+                  <span style={{
+                    width: 30,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: score >= 80 ? '#52c41a' : score >= 60 ? '#faad14' : '#ff4d4f',
+                    textAlign: 'right',
+                  }}>
+                    {score}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
 
