@@ -290,7 +290,8 @@ class InfoExtractAgent:
         raw_items = inner.get("raw_items", [])
         total = len(raw_items)
 
-        api_available = not self._should_use_mock()
+        mock_enabled = self._should_use_mock()
+        api_available = mock_enabled or self._llm_is_configured()
         if not api_available:
             print("[提取] API 未配置或不可用，跳过所有 LLM 调用，使用缓存数据")
 
@@ -363,11 +364,9 @@ class InfoExtractAgent:
                                                   raw_items, structured_items)
 
         elif needs_llm_raw and not api_available:
-            # API 不可用，所有待提取项用缓存字段兜底
-            print(f"[提取] API 不可用，{len(needs_llm_raw)} 条待提取项使用缓存字段兜底")
-            for offset, global_i in enumerate(needs_llm_indices):
-                self._use_cache_fallback(global_i, needs_llm_raw[offset],
-                                          raw_items, structured_items)
+            raise RuntimeError(
+                "当前无法连接可靠的信息抽取服务，已停止处理以避免生成模拟结果。"
+            )
         else:
             print(f"[提取] 全部 {total} 条自带结构化数据，跳过 LLM 提取")
 
@@ -721,15 +720,27 @@ class InfoExtractAgent:
         return self._parse_llm_json(response_text)
 
     def _should_use_mock(self) -> bool:
-        """检查 API 是否可用，不可用则回退 Mock 模式。"""
+        """仅在测试环境或显式配置时允许使用 Mock。"""
+        testing_config = self.config.get("testing", {})
+        explicitly_enabled = bool(
+            isinstance(testing_config, dict)
+            and testing_config.get("mock_enabled", False)
+        )
+        env_enabled = os.getenv("SAIZHITONG_MOCK_ENABLED", "").lower() in {
+            "1", "true", "yes"
+        }
+        return explicitly_enabled or env_enabled
+
+    def _llm_is_configured(self) -> bool:
+        """生产抽取必须具备真实模型依赖与凭证。"""
         if not self._openai_available:
-            return True
+            return False
         llm_config = self.config.get("llm", {})
         api_config = self.config.get("api", {})
         api_key_env = llm_config.get("api_key_env", "DEEPSEEK_API_KEY")
         api_key = api_config.get("key", "") or os.getenv(api_key_env, "")
         base_url = api_config.get("base_url", "") or llm_config.get("base_url", "")
-        return not api_key or not base_url
+        return bool(api_key and base_url)
 
     def _call_api(self, messages: list, max_tokens: int = 0) -> str:
         """
@@ -738,6 +749,10 @@ class InfoExtractAgent:
         """
         if self._should_use_mock():
             return self._mock_extract(messages)
+        if not self._llm_is_configured():
+            raise RuntimeError(
+                "当前无法连接可靠的信息抽取服务，已停止处理以避免生成模拟结果。"
+            )
 
         llm_config = self.config.get("llm", {})
         model_config = self.config.get("model", {}) or llm_config

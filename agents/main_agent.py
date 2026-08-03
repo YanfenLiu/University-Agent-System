@@ -772,7 +772,7 @@ class MainAgent:
     ) -> str | None:
         if not state.get("major"):
             state["pending_action"] = "collect_major"
-            return "你现在学习什么专业？"
+            return "为了推荐得更准确，先告诉我你的专业和年级吧。"
         if not state.get("grade"):
             state["pending_action"] = "collect_grade"
             return "你目前读大几，或者是在研究生阶段？"
@@ -792,10 +792,10 @@ class MainAgent:
                 "skills": "目前会的技能、工具或做过的项目",
                 "level": "对校级、省级、国家级或国际级有没有偏好",
             }
-            details = "；".join(prompts[key] for key in missing_preferences)
+            details = "、".join(prompts[key] for key in missing_preferences)
             return (
-                f"再简单说说这几项就可以开始推荐了：{details}。"
-                "可以一次性回答；没有特别要求的部分直接说不限即可。"
+                f"还想了解一下你{details}。可以一起简单说说，"
+                "没有特别偏好的部分直接说不限就可以。"
             )
         if state.get("competition_type_status") == "unknown":
             state["pending_action"] = "collect_competition_type"
@@ -1134,7 +1134,7 @@ class MainAgent:
 
     def _conversation_result_text(self, result: dict[str, Any]) -> str:
         if not isinstance(result, dict):
-            return "处理失败，请稍后重试。"
+            return "抱歉，这次没有处理成功。你的对话内容还在，可以稍后再试。"
         data = result.get("data", {})
         text = data.get("final_answer") if isinstance(data, dict) else ""
         if str(text or "").strip():
@@ -1145,26 +1145,27 @@ class MainAgent:
         # be exposed as the assistant's user-facing answer.
         status = str(result.get("status") or "failed").strip().lower()
         if status == "need_input":
-            return "还需要补充一些信息后才能继续，请根据当前提示完善相关内容。"
+            return "还需要了解一点信息才能继续，你可以根据刚才的问题补充一下。"
         if status == "partial":
-            return "这次只完成了部分处理，你可以补充更多信息后再继续。"
+            return "目前先整理出了部分结果，缺少的信息我会明确标出来。"
         if status in {"failed", "skipped"}:
-            return "这次处理没有成功，请稍后重试。"
-        return "这一步已经处理完成。"
+            return "抱歉，这次没有处理成功。你的对话内容还在，可以稍后再试。"
+        return "已经处理好了，你可以继续告诉我想重点了解哪一部分。"
 
     def _conversation_profile_summary(self, state: dict[str, Any]) -> str:
-        direction = state["competition_type"] or "方向不限"
-        skills = (
-            "、".join(state["skills"])
-            if state["skills"]
-            else "暂无特别擅长"
-        )
-        level = state["competition_level"] or "级别不限"
-        return (
-            f"明白了。我会按照**{state['major']}、{state['grade']}**，"
-            f"竞赛方向为**{direction}**、技能情况为**{skills}**、"
-            f"偏好**{level}**来进行推荐。"
-        )
+        major = str(state.get("major") or "").strip()
+        grade = str(state.get("grade") or "").strip()
+        direction = str(state.get("competition_type") or "").strip()
+        level = str(state.get("competition_level") or "").strip()
+        profile = "、".join(value for value in (grade, major) if value)
+        focus = []
+        if direction:
+            focus.append(f"偏{direction}方向")
+        if level:
+            focus.append(f"重点关注{level}项目")
+        if focus:
+            return f"好的，方向已经清楚了。我会为**{profile}**筛选竞赛，{'，'.join(focus)}。"
+        return f"好的，基本情况已经清楚了。我会从不同方向中筛选适合**{profile}**的竞赛。"
 
     def _with_acknowledgement(
         self,
@@ -1555,11 +1556,9 @@ class MainAgent:
         lines = [f"可以，我先按**{goal}**来比较前两个候选："]
         for index, item in enumerate(selected, 1):
             title = str(item.get("title") or f"候选 {index}")
-            score = item.get("match_score")
             reason = str(item.get("reason") or item.get("summary") or "现有数据没有给出完整推荐理由").strip()
             deadline = str(item.get("deadline") or "待核实").strip()
-            score_text = f"，匹配分 {score}" if score not in {None, ""} else ""
-            lines.append(f"{index}. **{title}**{score_text}；截止时间：{deadline}；{reason}")
+            lines.append(f"{index}. **{title}**；截止时间：{deadline}；{reason}")
         lines.append("如果以保研为目标，还需要结合你所在学校的竞赛认定目录判断，当前数据不能直接证明某项比赛一定能获得加分。")
         return "\n\n".join(lines)
 
@@ -2282,25 +2281,33 @@ If no agent is needed, selected_agents must be empty.
         collected_count = self._collected_item_count(agent_results)
         if not recommendations and collected_count == 0:
             return (
-                "这轮没有找到符合当前专业方向和竞赛级别的有效候选，因此暂时没有推荐结果。"
-                "你可以放宽级别，或者允许本专业相关的交叉方向，我再重新查找。"
+                "抱歉，这次没有找到足够符合条件的竞赛。"
+                "你可以适当放宽方向或赛事范围，我再帮你重新筛选。"
             )
         if recommendations and any(status == "success" for status in statuses):
-            names = "、".join(
-                r.get("title", "")
-                for r in recommendations[:3]
-                if isinstance(r, dict) and r.get("title")
-            )
+            backup_count = sum(bool(r.get("is_backup")) for r in recommendations if isinstance(r, dict))
+            primary_count = len(recommendations) - backup_count
             if all(status == "success" for status in statuses):
-                return f"已为你推荐以下竞赛：{names}。你可以继续问我其中某个竞赛的详情，或者选择一个项目准备报名材料。"
-            return f"已为你推荐以下竞赛：{names}。部分竞赛的详细信息可能不够完整，建议以官网通知为准。"
+                if primary_count == 0:
+                    return (
+                        "目前没有特别契合的项目，下面这些可以作为备选了解。"
+                        "建议先确认报名要求和准备周期，再决定是否投入时间。"
+                    )
+                return (
+                    f"我整理出了 {len(recommendations)} 个比较符合你当前需求的竞赛。"
+                    "它们的方向和准备方式各有不同，你可以先简单比较，再决定重点了解哪一个。"
+                )
+            return (
+                "我找到了一些可以考虑的项目，不过部分报名信息还不完整。"
+                "缺少的内容会明确标出，正式报名前建议再查看官网通知。"
+            )
         if all(status == "success" for status in statuses):
-            return "已经处理完成。你可以继续问我其中某个竞赛的详情，或者选择一个项目准备报名材料。"
+            return "已经处理好了，你可以继续告诉我想重点了解哪一部分。"
         if any(status == "success" for status in statuses):
             return "我已经整理出一部分结果，不过还有少量信息没有完整获取。建议你先查看现有内容，我会把需要核实的地方保留下来。"
         if any(status == "need_input" for status in statuses):
             return "当前缺少可供处理的具体数据，请补充竞赛通知、候选项目或明确的材料内容。"
-        return "这次处理没有顺利完成，可能是数据源或模型服务暂时不可用。你可以稍后重试，我会保留已经提供的条件。"
+        return "抱歉，这次处理没有顺利完成。你已经提供的条件还在，可以稍后再试。"
 
     @staticmethod
     def _build_actionable_issue_answer(
@@ -2332,14 +2339,13 @@ If no agent is needed, selected_agents must be empty.
 
         if "row-level security" in issue_text or "42501" in issue_text:
             return (
-                "你的专业、年级和竞赛方向已经足够，不需要继续补充个人信息。"
-                "这次没有生成推荐，是因为竞赛数据库的写入权限被 Supabase RLS 策略拦截，"
-                "需要先修复数据库权限后再重新查询。"
+                "你的基本信息已经足够了，不需要重复补充。"
+                "抱歉，竞赛数据服务目前暂时不可用，恢复后可以直接按现有条件重新查询。"
             )
         if "structured_items" in issue_text or "结构化项目数据" in issue_text:
             return (
-                "你的个人信息已经足够。当前缺少的是可供评分的竞赛候选数据，"
-                "不是你的专业、年级或技能；请先恢复竞赛数据采集，或提供一份具体竞赛通知后再推荐。"
+                "你的基本信息已经足够了。抱歉，当前没有可供筛选的竞赛数据；"
+                "你可以稍后再试，或者提供一份具体竞赛通知让我帮你分析。"
             )
         if "user_profile" in issue_text or "用户画像" in issue_text:
             return "还缺少你的专业和年级；告诉我这两项后，我就可以继续筛选竞赛。"

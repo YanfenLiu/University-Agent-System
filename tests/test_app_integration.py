@@ -127,6 +127,7 @@ def test_demo_runs_through_extract_recommendation_and_material(tmp_path: Path):
             "enabled": False,
             "api_key_env": "APP_DEMO_TEST_NO_KEY",
         },
+        "testing": {"mock_enabled": True},
         "agent": {
             "info_extract": {"prompt_file": "./config/extraction_prompt.yaml"},
             "material_agent": {

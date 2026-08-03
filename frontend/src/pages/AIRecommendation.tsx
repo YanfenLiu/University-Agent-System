@@ -254,25 +254,6 @@ export function AIRecommendation() {
         >
           {recommendedCompetitions.slice(0, 10).map((item, index) => (
             <div key={item.id} style={{ position: "relative" }}>
-              {/* AI 匹配度标签 */}
-              {userProfile.matched && (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: -6,
-                    right: -6,
-                    zIndex: 10,
-                    background: `linear-gradient(135deg, ${colorPrimary}, #4096ff)`,
-                    color: "#fff",
-                    fontSize: 11,
-                    padding: "2px 10px",
-                    borderRadius: 12,
-                    boxShadow: "0 2px 8px rgba(22, 119, 255, 0.3)"
-                  }}
-                >
-                  AI 推荐 #{index + 1}
-                </div>
-              )}
               <CompetitionCard
                 competition={item}
                 joined={isJoined(item.id)}
