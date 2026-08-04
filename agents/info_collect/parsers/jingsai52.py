@@ -12,7 +12,7 @@
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, date
 from bs4 import BeautifulSoup
 from .base import BaseParser
 
@@ -78,12 +78,13 @@ class Jingsai52Parser(BaseParser):
                     if m:
                         category = m.group(1).strip()
 
-            # 发布时间
+            # 发布时间（同时作为无年份截止日期的年份参考）
             publish_date = ""
             if list_info:
                 m = re.search(r"(\d{4}-\d{1,2}-\d{1,2})", list_info.get_text())
                 if m:
                     publish_date = m.group(1)
+            base_year, ref_month = _year_month(publish_date)
 
             # 主办方 — 从 dd_text 中提取
             organizer = ""
@@ -105,20 +106,22 @@ class Jingsai52Parser(BaseParser):
             for pat in [
                 r"报名截止时间[：:]\s*(.+?)(?:[，\|\|\n]|$)",
                 r"报名截止日期[：:]\s*(.+?)(?:[，\|\|\n]|$)",
-                r"报名截止[：:]\s*(.+?)(?:[，\|\|\n]|$)",
-                r"截止时间[：:]\s*(.+?)(?:[，\|\|\n]|$)",
-                r"截止日期[：:]\s*(.+?)(?:[，\|\|\n]|$)",
                 r"报名时间[：:]\s*即日起[至到\-\—~～]\s*(\d{4}[年.\-/]\d{1,2}[月.\-/]\d{1,2})",
                 r"报名时间[：:]\s*即日起[至到\-\—~～]\s*(\d{1,2}[月.\-/]\d{1,2})",
+                r"报名时间[：:]\s*(\d{4}[年.\-/]\d{1,2}[月.\-/]\d{1,2}[日号]?)[\-\—~～至到](\d{4}[年.\-/]\d{1,2}[月.\-/]\d{1,2}[日号]?)",
+                r"(?:征稿|投稿|参赛投稿|作品提交|作品征集|征集)截止(?:时间|日期)?[：:]\s*(.+?)(?:[；;，\|\|\n]|$)",
                 r"征集截止时间[：:]\s*(.+?)(?:[，\|\|\n]|$)",
                 r"作品提交截止[：:]\s*(.+?)(?:[，\|\|\n]|$)",
                 r"初赛截止日期[：:]\s*(.+?)(?:[，\|\|\n]|$)",
+                r"(?:初赛|考试)时间[：:]\s*即日起[至到\-\—~～]\s*(\d{4}[年.\-/]\d{1,2}[月.\-/]\d{1,2})",
                 r"即日起[至到\-\—~～]\s*(\d{4}[年.\-/]\d{1,2}[月.\-/]\d{1,2})",
                 r"即日起[至到\-\—~～]\s*(\d{1,2}[月.\-/]\d{1,2})",
             ]:
                 m = re.search(pat, dd_text)
                 if m:
-                    regist_end = self._norm_date(m.group(1).strip())
+                    # 范围格式（如「报名时间：7月14日-8月15日」）取结束日 group(2)
+                    raw = m.group(2) if m.lastindex and m.lastindex >= 2 else m.group(1)
+                    regist_end = self._norm_date(raw.strip(), base_year=base_year, ref_month=ref_month)
                     if regist_end:
                         break
 
@@ -222,6 +225,9 @@ class Jingsai52Parser(BaseParser):
         vw_text = vw_div.get_text(strip=True) if vw_div else ""
         search_text = vw_text + "\n" + description
 
+        # 正文里通常包含竞赛年份（如「2026年」），作为无年份截止日期的年份参考
+        base_year, ref_month = _year_month(search_text)
+
         return {
             "description": description,
             "organizer": self._ext_org_text(search_text),
@@ -229,9 +235,9 @@ class Jingsai52Parser(BaseParser):
             "co_organizers": self._ext_co_org_list(description),
             "supporters": [],
             "regist_start": "",
-            "regist_end": self._ext_regist_end(search_text),
-            "contest_start": self._ext_contest_start(search_text),
-            "contest_end": self._ext_contest_end(search_text),
+            "regist_end": self._ext_regist_end(search_text, base_year=base_year, ref_month=ref_month),
+            "contest_start": self._ext_contest_start(search_text, base_year=base_year, ref_month=ref_month),
+            "contest_end": self._ext_contest_end(search_text, base_year=base_year, ref_month=ref_month),
             "category": "",
             "level": "",
             "attachments": [],
@@ -280,37 +286,43 @@ class Jingsai52Parser(BaseParser):
                         items.append(si)
         return items
 
-    def _ext_regist_end(self, text: str) -> str:
+    def _ext_regist_end(self, text: str, base_year: int | None = None, ref_month: int | None = None) -> str:
         for pat in [
             r"报名截止时间[：:]\s*(.+?)(?:\n|$)",
             r"报名截止日期[：:]\s*(.+?)(?:\n|$)",
-            r"报名截止[：:]\s*(.+?)(?:\n|$)",
-            r"截止时间[：:]\s*(.+?)(?:\n|$)",
-            r"截止日期[：:]\s*(.+?)(?:\n|$)",
-            r"报名时间[：:]\s*即日起[至到\-\—~～]\s*(\d{4}[年.\-/]\d{1,2}[月.\-/]\d{1,2})",
-            r"报名时间[：:]\s*即日起[至到\-\—~～]\s*(\d{1,2}[月.\-/]\d{1,2})",
+            r"(?:报名|报名及初赛|报名及比赛|报名参赛|报名及)(?:时间)?[：:]\s*即日起[至到\-\—~～]\s*(\d{4}[年.\-/]\d{1,2}[月.\-/]\d{1,2})",
+            r"(?:报名|报名及初赛|报名及比赛|报名参赛|报名及)(?:时间)?[：:]\s*即日起[至到\-\—~～]\s*(\d{1,2}[月.\-/]\d{1,2})",
+            r"(?:报名|报名及初赛|报名及比赛|报名参赛|报名及)(?:时间)?[：:]\s*(\d{4}[年.\-/]\d{1,2}[月.\-/]\d{1,2}[日号]?)[\-\—~～至到](\d{4}[年.\-/]\d{1,2}[月.\-/]\d{1,2}[日号]?)",
+            r"(?:征稿|投稿|参赛投稿|作品提交|作品征集|征集)截止(?:时间|日期)?[：:]\s*(.+?)(?:\n|$)",
             r"初赛截止日期[：:]\s*(.+?)(?:\n|$)",
             r"征集截止时间[：:]\s*(.+?)(?:\n|$)",
             r"作品提交截止[：:]\s*(.+?)(?:\n|$)",
+            r"(?:初赛|考试|报名及初赛)时间[：:]\s*即日起[至到\-\—~～]\s*(\d{4}[年.\-/]\d{1,2}[月.\-/]\d{1,2})",
         ]:
             m = re.search(pat, text)
             if m:
-                return self._norm_date(m.group(1).strip())
+                # 范围格式取结束日 group(2)
+                raw = m.group(2) if m.lastindex and m.lastindex >= 2 else m.group(1)
+                return self._norm_date(raw.strip(), base_year=base_year, ref_month=ref_month)
         return ""
 
-    def _ext_contest_start(self, text: str) -> str:
-        m = re.search(r"(?:初赛时间|考试时间)[：:]\s*(.+?)(?:\n|$)", text)
+    def _ext_contest_start(self, text: str, base_year: int | None = None, ref_month: int | None = None) -> str:
+        # 覆盖"初赛时间/考试时间/第N场决赛/决赛时间"等表述（正文常见"2．第一场决赛：暂定2026年8月8日"）
+        m = re.search(r"(?:初赛时间|考试时间|第[一二三四五六七八九十\d]+场决赛|决赛时间|复赛时间)[：:]\s*(.+?)(?:\n|$)", text)
         if m:
             raw = m.group(1).strip()
             raw = re.sub(r"（[^）]*）", "", raw)
             raw = re.split(r"\|\|", raw)[0]
-            return raw.replace("\n", "")
+            # 只取日期部分；提取到的是整段正文（如"11月14日3.初赛获奖..."）时
+            # _norm_date 会取首个日期，避免整段脏文本入库
+            return self._norm_date(raw, base_year=base_year, ref_month=ref_month)
         return ""
 
-    def _ext_contest_end(self, text: str) -> str:
-        m = re.search(r"(?:决赛时间|决赛获奖公示时间)[：:]\s*(.+?)(?:\n|$)", text)
+    def _ext_contest_end(self, text: str, base_year: int | None = None, ref_month: int | None = None) -> str:
+        m = re.search(r"(?:决赛时间|决赛获奖公示时间|第[一二三四五六七八九十\d]+场决赛)[：:]\s*(.+?)(?:\n|$)", text)
         if m:
-            return re.sub(r"（[^）]*）", "", m.group(1).strip())
+            raw = re.sub(r"（[^）]*）", "", m.group(1).strip())
+            return self._norm_date(raw, base_year=base_year, ref_month=ref_month)
         return ""
 
     # ---- 工具 ----
@@ -328,7 +340,7 @@ class Jingsai52Parser(BaseParser):
         return text
 
     @staticmethod
-    def _norm_date(s: str) -> str:
+    def _norm_date(s: str, base_year: int | None = None, ref_month: int | None = None) -> str:
         if not s:
             return ""
         s = s.strip()
@@ -338,16 +350,19 @@ class Jingsai52Parser(BaseParser):
             return s.replace(".", "-")
         if re.match(r"^\d{4}/\d{2}/\d{2}$", s):
             return s.replace("/", "-")
-        m = re.match(r"(\d{4})[年.\-/](\d{1,2})[月.\-/](\d{1,2})[日号]?", s)
+        # 优先找"带年份"的完整日期（用 search 而非 match，因为前面可能有"暂定""截止"等前缀，
+        # 如"暂定2026年8月8日"），避免丢掉年份退化成 MM-DD。
+        m = re.search(r"(20\d{2})[年.\-/](\d{1,2})[月.\-/](\d{1,2})[日号]?", s)
         if m:
             return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
         m = re.match(r"(\d{1,2})月(\d{1,2})[日号]?", s)
         if m:
-            return f"{datetime.now().year}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
+            return _month_day_to_date(int(m.group(1)), int(m.group(2)), base_year, ref_month)
         m = re.search(r"(\d{1,2})月(\d{1,2})[日号]?", s)
         if m:
-            return f"{datetime.now().year}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
-        return s
+            return _month_day_to_date(int(m.group(1)), int(m.group(2)), base_year, ref_month)
+        # 无法解析成日期则返回空，不原样保留脏文本（如截断的「时  .. ...」或整段正文）
+        return ""
 
     @staticmethod
     def _normalize_url(href: str) -> str:
@@ -416,6 +431,37 @@ def _html_to_text(html: str) -> str:
         return ""
     soup = BeautifulSoup(html, "lxml")
     return soup.get_text(separator="\n", strip=True)
+
+
+def _month_day_to_date(month: int, day: int, base_year: int | None = None, ref_month: int | None = None) -> str:
+    """无年份的「M月D日」补全年份。
+
+    base_year 能推断出来（如列表页 publish_date 的年份）就用它补全年份；
+    推断不出来就不瞎编年份，只返回「MM-DD」。
+    跨年例外：年末（10-12 月）发布、截止在年初（1-3 月）时推断到下一年。
+    """
+    if base_year is None:
+        return f"{month:02d}-{day:02d}"
+    year = base_year
+    try:
+        result = date(year, month, day)
+        if ref_month is not None and ref_month >= 10 and month <= 3:
+            result = result.replace(year=year + 1)
+        return f"{result.year}-{result.month:02d}-{result.day:02d}"
+    except ValueError:
+        # 非法日期（如 2 月 30 日）回退为当年
+        return f"{year}-{month:02d}-{day:02d}"
+
+
+def _year_month(s: str | None) -> tuple[int | None, int | None]:
+    """从日期字符串提取 (年, 月)，无法解析返回 (None, None)。"""
+    m = re.search(r"(20\d{2})[-/.](\d{1,2})", s or "")
+    if not m:
+        return None, None
+    try:
+        return int(m.group(1)), int(m.group(2))
+    except (ValueError, TypeError):
+        return None, None
 
 
 # ---- 自注册 ----

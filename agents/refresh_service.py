@@ -66,8 +66,10 @@ class RefreshService:
                 if result.get("status") != "completed":
                     continue
                 stats = result.get("stats", {})
-                for field in ("items_found", "items_new", "items_changed", "items_unchanged"):
+                for field in ("items_found", "items_new", "items_unchanged"):
                     totals[field] += int(stats.get(field, 0) or 0)
+                # crawler 用 items_updated 表示「内容变化的条数」，对应 refresh_jobs.items_changed
+                totals["items_changed"] += int(stats.get("items_updated", 0) or 0)
                 extraction_ids.extend(
                     int(value) for value in stats.get("extraction_ids", []) if value
                 )

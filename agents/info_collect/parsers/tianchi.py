@@ -11,7 +11,7 @@ API 结构:
 import json
 from datetime import datetime
 from bs4 import BeautifulSoup
-from .base import BaseParser
+from .base import BaseParser, fmt_date_beijing
 
 DETAIL_BASE = "https://tianchi.aliyun.com"
 
@@ -225,17 +225,8 @@ class TianchiParser(BaseParser):
 
 
 def _fmt_datetime(val) -> str:
-    """格式化日期时间字符串为日期。"""
-    if not val:
-        return ""
-    s = str(val)
-    # "2026-07-17 00:00:00" → "2026-07-17"
-    if " " in s:
-        return s.split(" ")[0]
-    # "2026-07-17T00:00:00.000Z" → "2026-07-17"
-    if "T" in s:
-        return s.split("T")[0]
-    return s[:10] if len(s) >= 10 else s
+    """格式化日期时间字符串为北京时间日期。"""
+    return fmt_date_beijing(val)
 
 
 # ---- 自注册 ----

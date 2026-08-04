@@ -374,8 +374,8 @@ function RefreshJobsTab() {
           },
         },
         { title: '类型', dataIndex: 'trigger_type', width: 80 },
-        { title: '新增', dataIndex: 'items_found', width: 70 },
-        { title: '更新', dataIndex: 'items_updated', width: 70 },
+        { title: '新增', dataIndex: 'items_new', width: 70 },
+        { title: '更新', dataIndex: 'items_changed', width: 70 },
         {
           title: '开始', dataIndex: 'started_at', width: 180,
           render: (v: string) => formatTime(v),

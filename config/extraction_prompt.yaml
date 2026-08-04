@@ -52,6 +52,11 @@ system: |
   - 示例："2026年9月1日至2026年9月30日" 或 "截止至2026年8月31日24:00"
   - 不要转换为其他格式，保持原文措辞
 
+  ### contest_start / contest_end（比赛起止时间）
+  - 提取比赛本身的开始和结束日期（初赛/决赛时间等），格式 YYYY-MM-DD
+  - 与报名截止（deadline）不同：deadline 是报名截止，contest 是比赛进行时间
+  - 原文明确写了比赛日期就提取；没有写就填 "unknown"，不要编造
+
   ### requirements（申报条件 — 结构化嵌套对象）
   以下 7 个子字段必须全部出现，即使为空也要保留：
 
@@ -129,6 +134,8 @@ system: |
     "type": "学科竞赛|科研项目|创新创业|社会实践|其他",
     "deadline": "YYYY-MM-DD 或 unknown",
     "registration_time": "字符串 或 unknown",
+    "contest_start": "YYYY-MM-DD 或 unknown",
+    "contest_end": "YYYY-MM-DD 或 unknown",
     "requirements": {
       "target_majors": ["专业1", "专业2"],
       "target_grades": ["大一", "大二", "大三", "大四"],

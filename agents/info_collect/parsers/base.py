@@ -1,6 +1,29 @@
 """Parser 抽象基类 — 每个平台实现自己的 parser 子类。"""
 
 from abc import ABC, abstractmethod
+from datetime import datetime, timedelta, timezone
+
+BEIJING_TZ = timezone(timedelta(hours=8))
+
+
+def fmt_date_beijing(val) -> str:
+    """格式化日期时间值为 'YYYY-MM-DD'，时区统一转北京时间。
+
+    带时区标记（Z / +08:00 等）的 ISO 时间先转北京时间再取日期，避免
+    UTC 时间在跨天时被截断成前一天（如 2026-06-29T16:00:00Z 实际是北京 6 月 30 日）。
+    无时区标记的时间视为已是北京时间，直接取日期部分。
+    """
+    if not val:
+        return ""
+    s = str(val)
+    normalized = s.replace(" ", "T", 1) if (" " in s and "T" not in s) else s
+    try:
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            return (s.split("T")[0] if "T" in s else s.split(" ")[0])[:10]
+        return dt.astimezone(BEIJING_TZ).strftime("%Y-%m-%d")
+    except ValueError:
+        return s[:10] if len(s) >= 10 else s
 
 
 class BaseParser(ABC):

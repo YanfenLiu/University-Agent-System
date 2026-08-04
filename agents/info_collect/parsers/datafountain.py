@@ -11,7 +11,7 @@ import json
 import re
 from datetime import datetime
 from bs4 import BeautifulSoup
-from .base import BaseParser
+from .base import BaseParser, fmt_date_beijing
 
 DETAIL_BASE = "https://www.datafountain.cn"
 
@@ -57,10 +57,11 @@ class DatafountainParser(BaseParser):
         if c.get("typeLabel") and c["typeLabel"] not in category:
             category = f"{c['typeLabel']}, {category}" if category else c["typeLabel"]
 
-        # 比赛阶段 (race.startTime ~ race.endTime)
-        race = c.get("race") or {}
-        contest_start = _fmt_iso(race.get("startTime") or c.get("startTime"))
-        contest_end = _fmt_iso(race.get("endTime") or c.get("endTime"))
+        # 比赛时间：列表 API 没有 race 子对象（race 恒为空），
+        # c.startTime/c.endTime 是报名周期，不能误填为比赛时间。
+        # 真实比赛起止时间由详情页 schedules 推导，见 _parse_api_detail。
+        contest_start = ""
+        contest_end = ""
 
         return {
             "title": c.get("title", ""),
@@ -168,6 +169,8 @@ class DatafountainParser(BaseParser):
                     "start": s.get("startTime", ""),
                     "end": s.get("endTime", ""),
                 })
+        # 比赛起止时间由赛程阶段推导（详情 API 无直接的 startTime/endTime）
+        contest_start, contest_end = _stage_span(stages)
 
         return {
             "description": description,
@@ -181,8 +184,8 @@ class DatafountainParser(BaseParser):
             "supporters": [],
             "regist_start": _fmt_iso(detail.get("startTime")),
             "regist_end": _fmt_iso(detail.get("endTime")),
-            "contest_start": _fmt_iso(detail.get("startTime")),
-            "contest_end": _fmt_iso(detail.get("endTime")),
+            "contest_start": contest_start,
+            "contest_end": contest_end,
             "category": "",
             "level": "",
             "attachments": [],
@@ -244,14 +247,28 @@ class DatafountainParser(BaseParser):
 
 
 def _fmt_iso(val) -> str:
-    if not val:
-        return ""
-    s = str(val)
-    if "T" in s:
-        return s.split("T")[0]
-    if " " in s:
-        return s.split(" ")[0]
-    return s[:10] if len(s) >= 10 else s
+    """格式化日期为北京时间日期；DF 返回 UTC ISO 时间，需转换时区。"""
+    return fmt_date_beijing(val)
+
+
+def _stage_span(stages: list[dict]) -> tuple[str, str]:
+    """从赛程阶段推导比赛起止日期；无可用阶段时返回空字符串。
+
+    兼容两种阶段字段名：_parse_api_detail 拼装的 start/end，
+    以及原始 schedules 里的 startTime/endTime。
+    """
+    starts = []
+    ends = []
+    for s in stages:
+        if not isinstance(s, dict):
+            continue
+        start = _fmt_iso(s.get("start") or s.get("startTime"))
+        end = _fmt_iso(s.get("end") or s.get("endTime"))
+        if start:
+            starts.append(start)
+        if end:
+            ends.append(end)
+    return (min(starts) if starts else "", max(ends) if ends else "")
 
 
 # ---- 自注册 ----
