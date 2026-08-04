@@ -219,12 +219,12 @@ python -m pytest -q -p no:cacheprovider
 - `data/output`：MaterialAgent 生成的 `.docx` 文件。
 - `data/temp`：运行期临时文件。
 
-**Supabase 持久化存储**：配置 `SUPABASE_URL` + `SUPABASE_ANON_KEY` + `SUPABASE_DB_PASSWORD` 后，采集到的竞赛数据会写入云端 PostgreSQL 数据库。后续请求优先从数据库搜索已有数据，仅在数据不够或超过有效期（默认 24小时）时触发爬虫刷新。
+**Supabase 持久化存储**：配置 `SUPABASE_URL` + `SUPABASE_ANON_KEY` + `SUPABASE_DB_PASSWORD` 后，采集到的竞赛数据会写入云端 PostgreSQL 数据库。用户对话中的推荐请求直接从数据库读取已有数据，不触发爬虫；数据的采集和更新由独立的刷新流程负责（见下方竞赛库逻辑全量刷新）。
 
 ### 竞赛库逻辑全量刷新
 
-1. 在 Supabase SQL Editor 执行 `migration.sql`，创建刷新字段和
-   `refresh_jobs` 表。
+1. 在 Supabase SQL Editor 依次执行 `migration.sql` 和
+   `migration_auth.sql`，创建全部 9 张表及索引。
 2. 在 GitHub Actions Secrets 配置 `SUPABASE_URL`、
    `SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY` 和
    `DEEPSEEK_API_KEY`。
@@ -252,48 +252,76 @@ GitHub Actions 只提供临时运行环境，实际采集和抽取仍由项目�
 
 ## Supabase 数据库表结构
 
-配置好 Supabase 后，首次启动会自动通过直连 PostgreSQL 创建以下两张表和一个索引（如果有限制无法自动建表，可以手动操作，将migration.sql的语句复制到 SQL Editor后运行即可）：
+配置好 Supabase 后，首次启动会自动通过直连 PostgreSQL 建表。如果自动建表受限，可以在 Supabase SQL Editor 中依次执行 `migration.sql` 和 `migration_auth.sql`。
 
-**competitions** — 竞赛数据主表
+数据库共 9 张表，以下列出 3 张核心表，完整建表语句见两个 migration 文件。
+
+### competitions — 竞赛数据主表
 
 | 列 | 类型 | 说明 |
 |---|---|---|
 | id | BIGSERIAL | 主键 |
 | title | TEXT | 竞赛标题 |
 | url | TEXT | 竞赛页面链接 |
-| source | TEXT | 数据来源（saikr / 52jingsai / ali_tianchi 等） |
+| source | TEXT | 数据来源（saikr / 52jingsai / ali_tianchi / heywhale / datafountain） |
 | publish_date | TEXT | 发布日期 |
-| description | TEXT | 竞赛描述 |
-| organizer | TEXT | 主办方 |
-| organizer_list / co_organizers / supporters | JSONB | 主办 / 协办 / 支持单位列表 |
-| regist_start / regist_end | TEXT | 报名起止时间 |
-| contest_start / contest_end | TEXT | 比赛起止时间 |
-| category | TEXT | 分类 |
-| level | TEXT | 级别 |
+| description | TEXT | 竞赛描述全文 |
+| summary | TEXT | LLM 提取的结构化摘要 |
+| organizer | TEXT | 主办方名称 |
+| organizer_list | JSONB | 主办单位列表 |
+| co_organizers | JSONB | 协办单位列表 |
+| supporters | JSONB | 支持单位列表 |
+| regist_start | TEXT | 报名开始时间 |
+| regist_end | TEXT | 报名截止时间 |
+| contest_start | TEXT | 比赛开始时间 |
+| contest_end | TEXT | 比赛结束时间 |
+| category | TEXT | 竞赛类别（如 AI、数学） |
+| level | TEXT | 竞赛级别（如国家级、省部级） |
 | attachments | JSONB | 附件列表 |
 | raw_text | TEXT | 原始文本全文 |
-| collected_at | TEXT | 采集时间（建有降序索引） |
+| collected_at | TEXT | 采集时间 |
 | updated_at | TEXT | 最后更新时间 |
-| **唯一约束** | | `(url, source)` — 同一来源同一链接不会重复存储 |
+| content_hash | TEXT | SHA-256 内容哈希，增量刷新时用于检测变化 |
+| extraction_status | TEXT | 抽取状态：pending / completed / failed |
+| extraction_error | TEXT | 抽取失败时的错误信息 |
+| extracted_at | TEXT | 抽取完成时间 |
+| last_seen_at | TEXT | 最近一次刷新时仍存在于源站的时间 |
+| refresh_job_id | BIGINT | 关联的刷新任务 ID → refresh_jobs.id |
 
-**crawl_logs** — 爬取日志表
+- **唯一约束**: `(url, source)`，同一来源同一链接不重复存储
+- **索引**: `collected_at DESC`、`content_hash`、`extraction_status`、`last_seen_at DESC`
+
+### profiles — 用户账户表
 
 | 列 | 类型 | 说明 |
 |---|---|---|
-| id | BIGSERIAL | 主键 |
-| task_id | TEXT | 任务 ID |
-| source | TEXT | 数据来源 |
-| pages_crawled | INTEGER | 爬取页数 |
-| items_found / items_new / items_updated | INTEGER | 统计字段 |
-| status | TEXT | running / completed / failed |
-| error_message | TEXT | 异常信息 |
-| started_at / finished_at | TEXT | 起止时间 |
+| id | UUID | 主键，自动生成 |
+| username | TEXT | 登录用户名（唯一） |
+| password_hash | TEXT | bcrypt 加密密码 |
+| display_name | TEXT | 显示名称 |
+| role | TEXT | 角色：admin / user |
+| avatar | TEXT | 头像 URL |
+| status | TEXT | 账户状态：active / frozen（冻结即软删除） |
+| created_at | TIMESTAMPTZ | 注册时间 |
+| updated_at | TIMESTAMPTZ | 最后更新时间 |
 
-**索引**
+### conversations — 对话历史表
 
-- `idx_competitions_collected_at` — `collected_at DESC`，加速按时间倒序搜索。
+| 列 | 类型 | 说明 |
+|---|---|---|
+| id | UUID | 主键，自动生成 |
+| user_id | UUID | 所属用户 → profiles.id（CASCADE 删除） |
+| title | TEXT | 对话标题（默认"新对话"） |
+| state_snapshot | JSONB | Agent 状态快照（上下文、用户画像等） |
+| messages | JSONB | 完整消息历史 `[{role, content, files}]` |
+| created_at | TIMESTAMPTZ | 创建时间 |
+| updated_at | TIMESTAMPTZ | 最后更新时间 |
 
-如果用户未配置数据库密码，终端会输出完整的建表 SQL，复制到 Supabase SQL Editor 中手动执行即可。
+- **索引**: `(user_id, updated_at DESC)` 加速对话列表查询
+
+其余表（crawl_logs、refresh_jobs、refresh_tokens、login_attempts、user_portraits、saved_competitions）的完整定义见 `migration.sql` 和 `migration_auth.sql`。
+
+数据库时区设置为 `Asia/Shanghai`，所有 TIMESTAMPTZ 列以 UTC 存储、北京时间显示。
 
 ## 已知限制
 
