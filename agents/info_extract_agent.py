@@ -34,6 +34,7 @@ class InfoExtractAgent:
 
     REQUIRED_FIELDS = [
         "title", "type", "deadline", "registration_time",
+        "contest_start", "contest_end",
         "requirements", "reward", "organizer", "source_url", "summary"
     ]
 
@@ -47,6 +48,8 @@ class InfoExtractAgent:
         "type": "其他",
         "deadline": "unknown",
         "registration_time": "unknown",
+        "contest_start": "unknown",
+        "contest_end": "unknown",
         "requirements": {
             "target_majors": [],
             "target_grades": [],
@@ -273,7 +276,7 @@ class InfoExtractAgent:
 
         # ── 核心业务逻辑 ─────────────────────────────────────
 
-    MAX_BATCH_SIZE = 20  # 单次批量抽取最大条数，防止 token 超限
+    MAX_BATCH_SIZE = 40  # 单次批量抽取最大条数（每条截断 3000 字符，40 条约 6 万 tokens，远低于 1M 上限）
 
     def process(self, input_data: dict) -> dict:
         """智能提取：已有结构化数据的数据项跳过 LLM，仅对脏数据做 LLM 提取。
@@ -298,30 +301,12 @@ class InfoExtractAgent:
         needs_llm_indices: list[int] = []
         needs_llm_raw: list[dict] = []
 
-        # ── 第一步：区分结构化与非结构化 ──
+        # ── 第一步：所有记录都进 LLM 队列（保证 summary 是真生成的摘要，而非 description 原文）──
+        # parser 已提取的结构化字段（title/时间/主办方）由 _apply_source_fallbacks 兜底，
+        # LLM 负责生成真 summary 并补全缺失字段；仅 API 不可用时才缓存直通。
         for i, item in enumerate(raw_items):
-            title = str(item.get("title", "") or "").strip()
-            organizer = str(item.get("organizer", "") or "").strip()
-            has_regist = bool(str(item.get("regist_start", "") or "").strip())
-
-            if title and (organizer or has_regist):
-                # 已有结构化数据 → 直接 convert
-                extracted = {
-                    "title": title,
-                    "deadline": item.get("regist_end", ""),
-                    "registration_time": item.get("regist_start", ""),
-                    "organizer": organizer,
-                    "summary": str(item.get("description", "") or title),
-                    "type": "其他",
-                    "reward": "unknown",
-                    "requirements": dict(self.FIELD_DEFAULTS["requirements"]),
-                    "source_url": item.get("url", ""),
-                }
-                structured_items[i] = self._finalize_item(extracted, item)
-                print(f"  [缓存直通] ({i+1}/{total}) {title[:50]} ...")
-            else:
-                needs_llm_indices.append(i)
-                needs_llm_raw.append(item)
+            needs_llm_indices.append(i)
+            needs_llm_raw.append(item)
 
         # ── 第二步：对需要 LLM 提取的项做批量抽取 ──
         if needs_llm_raw and api_available:
@@ -418,6 +403,13 @@ class InfoExtractAgent:
             registration_time = str(raw_item.get("regist_start", "")).strip()
             if registration_time:
                 result["registration_time"] = registration_time
+
+        # 比赛时间：LLM 没抽到就用 parser 从列表/详情解析的兜底
+        for llm_field, parser_field in (("contest_start", "contest_start"), ("contest_end", "contest_end")):
+            if result.get(llm_field) in missing:
+                parsed = str(raw_item.get(parser_field, "") or "").strip()
+                if parsed:
+                    result[llm_field] = parsed
 
         requirements = result.get("requirements", {})
         if not isinstance(requirements, dict):
@@ -788,14 +780,14 @@ class InfoExtractAgent:
                 if value not in self.VALID_TYPES:
                     value = "其他"
 
-            # ── deadline 格式校验 ──
-            if field == "deadline":
+            # ── deadline / contest 日期格式校验 ──
+            if field in ("deadline", "contest_start", "contest_end"):
                 if value != "unknown" and not self.DEADLINE_PATTERN.match(
                     str(value)
                 ):
-                    date_match = re.search(r"\d{4}-\d{2}-\d{2}", str(value))
+                    date_match = re.search(r"(\d{4})[年.\-/](\d{1,2})[月.\-/](\d{1,2})[日号]?", str(value))
                     if date_match:
-                        value = date_match.group(0)
+                        value = f"{date_match.group(1)}-{int(date_match.group(2)):02d}-{int(date_match.group(3)):02d}"
                     else:
                         value = "unknown"
 

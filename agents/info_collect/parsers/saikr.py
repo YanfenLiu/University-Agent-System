@@ -68,6 +68,10 @@ class SaikrParser(BaseParser):
         if url and not url.startswith("http"):
             url = DETAIL_BASE + url
 
+        # 首页推荐数据没有 regist_*_time 时间戳，只有 contest_time 文本
+        # （如 "2026.05.26 ~ 2026.08.05"），解析为报名/比赛起止时间。
+        contest_start, contest_end = _parse_contest_time(item.get("contest_time", ""))
+
         return {
             "title": item.get("title", ""),
             "url": url,
@@ -77,10 +81,10 @@ class SaikrParser(BaseParser):
             "collected_at": datetime.now().isoformat(),
             "description": "",
             "organizer": item.get("organiser", ""),
-            "regist_start": _ts_to_date(item.get("regist_start_time")) or "",
-            "regist_end": _ts_to_date(item.get("regist_end_time")) or "",
-            "contest_start": _ts_to_date(item.get("contest_start_time")) or "",
-            "contest_end": _ts_to_date(item.get("contest_end_time")) or "",
+            "regist_start": _ts_to_date(item.get("regist_start_time")) or contest_start,
+            "regist_end": _ts_to_date(item.get("regist_end_time")) or contest_end,
+            "contest_start": _ts_to_date(item.get("contest_start_time")) or contest_start,
+            "contest_end": _ts_to_date(item.get("contest_end_time")) or contest_end,
             "category": "",
             "level": "",
             "attachments": [],
@@ -111,8 +115,17 @@ class SaikrParser(BaseParser):
         }
 
     def merge_detail(self, item: dict, detail_fields: dict) -> dict:
-        """将详情字段合并到列表项中。"""
-        item.update(detail_fields)
+        """将详情字段合并到列表项中：列表已有非空值不覆盖，详情只填空缺字段。
+
+        不能用 item.update(detail_fields) 整体覆盖：赛氪详情 API 通常不返回比赛时间
+        （contest_start/contest_end 为空），直接覆盖会把列表已采集到的比赛时间清空。
+        """
+        for key, val in detail_fields.items():
+            if key == "description":
+                if val and len(val) > len(item.get("description", "")):
+                    item[key] = val
+            elif val and not item.get(key):
+                item[key] = val
         # raw_text 合并列表和详情数据
         list_data = {}
         try:
@@ -135,9 +148,29 @@ def _ts_to_date(ts) -> Optional[str]:
     if not ts or ts == 0:
         return None
     try:
-        return datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d")
-    except (ValueError, OSError):
+        ts = int(ts)
+        if abs(ts) > 10 ** 11:
+            # 毫秒时间戳（13 位）按秒转换，否则日期会偏移约 42 年
+            ts //= 1000
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+    except (ValueError, OSError, OverflowError):
         return None
+
+
+def _parse_contest_time(text: str) -> tuple[str, str]:
+    """解析首页推荐的 contest_time 文本（如 "2026.05.26 ~ 2026.08.05"）。
+
+    Returns:
+        (start, end) — 均为 YYYY-MM-DD；解析失败返回 ("", "")。
+    """
+    if not text or not isinstance(text, str):
+        return "", ""
+    m = re.search(r"(\d{4})\.(\d{2})\.(\d{2})\s*[~\-—~～]\s*(\d{4})\.(\d{2})\.(\d{2})", text)
+    if m:
+        start = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+        end = f"{m.group(4)}-{m.group(5)}-{m.group(6)}"
+        return start, end
+    return "", ""
 
 
 def _fmt_time(val) -> str:
@@ -154,8 +187,10 @@ def _fmt_time(val) -> str:
             return "-".join(parts)
     # Unix 时间戳
     if s.isdigit() and len(s) >= 10:
-        return _ts_to_date(int(s)) or s
-    return s
+        return _ts_to_date(int(s)) or ""
+    # 无法解析的脏值（如赛氪详情接口对无比赛时间的赛事返回
+    # "-0001/11/30 00:00:00"）直接置空，不原样入库
+    return ""
 
 
 def _html_to_text(html: str) -> str:

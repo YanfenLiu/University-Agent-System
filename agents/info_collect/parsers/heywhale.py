@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 from bs4 import BeautifulSoup
-from .base import BaseParser
+from .base import BaseParser, fmt_date_beijing
 
 DETAIL_BASE = "https://www.heywhale.com"
 
@@ -73,7 +73,12 @@ class HeywhaleParser(BaseParser):
             "co_organizers": [],
             "supporters": [],
             "regist_start": _fmt_iso(item.get("StartDate")),
-            "regist_end": _fmt_iso(item.get("RegisterEndDate") or item.get("EndDate")),
+            # 列表 API 不返回 RegisterEndDate（仅详情有）；LIVE 录播课无独立报名期，
+            # 用活动 EndDate 作为截止时间，否则 regist_end 永远为空。
+            "regist_end": _fmt_iso(
+                item.get("RegisterEndDate")
+                or (item.get("EndDate") if item.get("DetailType") == "LIVE" else None)
+            ),
             "contest_start": _fmt_iso(item.get("StartDate")),
             "contest_end": _fmt_iso(item.get("EndDate")),
             "category": TYPE_MAP.get(item.get("DetailType", ""), item.get("DetailType", "")),
@@ -150,7 +155,12 @@ class HeywhaleParser(BaseParser):
             "co_organizers": [],
             "supporters": [],
             "regist_start": _fmt_iso(detail.get("StartDate")),
-            "regist_end": _fmt_iso(detail.get("RegisterEndDate") or detail.get("EndDate")),
+            # 只有 LIVE 录播课才用 EndDate 兜底报名截止；普通竞赛 EndDate 是比赛结束，
+            # 不能当成报名截止。
+            "regist_end": _fmt_iso(
+                detail.get("RegisterEndDate")
+                or (detail.get("EndDate") if detail.get("DetailType") == "LIVE" else None)
+            ),
             "contest_start": _fmt_iso(detail.get("StartDate")),
             "contest_end": _fmt_iso(detail.get("EndDate")),
             "category": TYPE_MAP.get(detail.get("DetailType", ""), detail.get("DetailType", "")),
@@ -218,12 +228,8 @@ class HeywhaleParser(BaseParser):
 
 
 def _fmt_iso(val) -> str:
-    if not val:
-        return ""
-    s = str(val)
-    if "T" in s:
-        return s.split("T")[0]
-    return s[:10] if len(s) >= 10 else s
+    """格式化日期为北京时间日期；和鲸返回 UTC ISO 时间，需转换时区。"""
+    return fmt_date_beijing(val)
 
 
 # ---- 自注册 ----

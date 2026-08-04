@@ -90,14 +90,19 @@ class Crawler:
         elapsed_start = time.monotonic()
 
         def _is_expired(item: dict) -> bool:
-            end_str = str(item.get("regist_end", "")).strip()
-            if not end_str:
-                return False
-            try:
-                from datetime import date as _date
-                return _date.fromisoformat(end_str[:10]) < _date.today()
-            except (ValueError, TypeError):
-                return False
+            # 优先按报名截止判断，regist_end 为空时按比赛结束兜底，
+            # 避免无报名截止的已结束竞赛（如 LIVE 录播课）被当作有效。
+            for field in ("regist_end", "contest_end"):
+                end_str = str(item.get(field, "")).strip()
+                if not end_str:
+                    continue
+                try:
+                    from datetime import date as _date
+                    if _date.fromisoformat(end_str[:10]) < _date.today():
+                        return True
+                except (ValueError, TypeError):
+                    continue
+            return False
 
         def _add(parsed: dict) -> bool:
             nonlocal all_items, seen_urls
@@ -105,7 +110,10 @@ class Crawler:
                 return False
             seen_urls.add(parsed["url"])
             if _is_expired(parsed):
-                return False
+                # 过期条目只拦全新记录；库里已存在（同 url+source）的仍放行，
+                # 用本次爬取的新值覆盖错误旧值，再由 delete_expired 统一清理。
+                if not self.storage.exists(parsed["url"], parsed["source"]):
+                    return False
             all_items.append(parsed)
             return True
 
@@ -139,17 +147,19 @@ class Crawler:
                 except Exception as e:
                     logger.warning("获取 %s 配置失败: %s", source, e)
 
+                source_matched: list[dict] = []
                 try:
                     featured = _retry(lambda: client.get_featured(), f"{source} 首页推荐")
                     if featured:
                         for item in parser.parse_featured_list(featured):
                             stats["items_found"] += 1
-                            if not _add(item):
+                            if _add(item):
+                                source_matched.append(item)
+                            else:
                                 stats["items_expired"] += 1
                 except Exception as e:
                     logger.warning("获取 %s 首页推荐失败: %s", source, e)
 
-                source_matched: list[dict] = []
                 page = 1
                 while page <= max_pages:
                     try:
@@ -236,7 +246,7 @@ def _retry(fn, label: str = "", max_retries: int = 2):
 def _fetch_detail(client, parser, item: dict, ident: str, max_retries: int = 2, source: str = ""):
     for attempt in range(max_retries + 1):
         try:
-            time.sleep(random.uniform(1, 3))
+            time.sleep(random.uniform(0.1, 0.3))
             detail = client.get_contest_detail(ident)
             detail_fields = parser.parse_detail(detail)
             parser.merge_detail(item, detail_fields)

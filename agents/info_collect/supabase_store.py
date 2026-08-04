@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 import threading
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -97,6 +98,23 @@ CREATE INDEX IF NOT EXISTS idx_competitions_content_hash ON competitions (conten
 CREATE INDEX IF NOT EXISTS idx_competitions_extraction_status ON competitions (extraction_status);
 CREATE INDEX IF NOT EXISTS idx_refresh_jobs_status ON refresh_jobs (status);
 CREATE INDEX IF NOT EXISTS idx_refresh_jobs_finished_at ON refresh_jobs (finished_at DESC);"""
+
+
+def _extract_first_date(text: str) -> str:
+    """从文本中提取首个日期（YYYY-MM-DD / YYYY年M月D日 等），提取不到返回空。
+
+    用于把 LLM 输出的报名时间范围描述（如"2026年9月1日至2026年9月30日"）
+    清洗成 regist_start 列需要的单个起始日期。
+    """
+    if not text:
+        return ""
+    m = re.search(r"(20\d{2})[年.\-/](\d{1,2})[月.\-/](\d{1,2})[日号]?", text)
+    if m:
+        return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    m = re.search(r"20\d{2}-\d{2}-\d{2}", text)
+    if m:
+        return m.group(0)
+    return ""
 
 
 def _extract_project_ref(supabase_url: str) -> str | None:
@@ -340,13 +358,48 @@ class SupabaseStore:
             logger.info("Supabase 插入: %s", item.get("title", "")[:40])
         return "new"
 
-    @staticmethod
-    def _content_hash(item: dict) -> str:
+    # 爬虫每次爬取都会变化的统计类字段，不能参与 content_hash，
+    # 否则赛氪等源因浏览量/关注数变化导致全部记录被判定 changed、每次都重抽 LLM。
+    _VOLATILE_FIELDS = {
+        # saikr：浏览量/关注/通知/排名等
+        "look_count", "focus_num", "notice_count", "news_count",
+        "can_register", "is_contest_status", "teams", "users", "rank", "sons_num",
+        # heywhale：参与人数/队伍数/作品数/排序
+        "Sequence", "TeamsNumber", "UsersNumber", "WorksNumber",
+        # 天池：队伍数（防御性，raw_text 里可能不存在）
+        "teamCount", "raceListStatus",
+    }
+
+    @classmethod
+    def _content_hash(cls, item: dict) -> str:
         payload = {field: item.get(field, "") for field in FIELDS}
+        # raw_text 是原始 JSON（含 list/detail），清洗掉易变字段后参与哈希，
+        # 使"内容没变"的记录哈希稳定 → 判定 unchanged → 不重复调 LLM
+        try:
+            raw = payload.get("raw_text", "")
+            if raw:
+                parsed = _json.loads(raw)
+                cls._strip_volatile(parsed)
+                payload["raw_text"] = _json.dumps(parsed, ensure_ascii=False, sort_keys=True)
+        except (ValueError, TypeError):
+            pass
         encoded = _json.dumps(
             payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
+    def _strip_volatile(cls, obj) -> None:
+        """递归删除 dict 中的易变字段（原地修改）。"""
+        if isinstance(obj, dict):
+            for key in list(obj.keys()):
+                if key in cls._VOLATILE_FIELDS:
+                    obj.pop(key, None)
+                else:
+                    cls._strip_volatile(obj[key])
+        elif isinstance(obj, list):
+            for item in obj:
+                cls._strip_volatile(item)
 
     def upsert_item_detailed(
         self,
@@ -378,16 +431,23 @@ class SupabaseStore:
                 "collected_at": now,
                 "updated_at": now,
             })
-            response = self.client.table("competitions").insert(row).execute()
+            try:
+                response = self.client.table("competitions").insert(row).execute()
+            except Exception as exc:
+                logger.warning("插入失败(跳过): %s - %s", item.get("title", "")[:40], exc)
+                return {"operation": "unchanged", "record_id": None, "needs_extraction": False}
             record = response.data[0] if response.data else {}
             return {"operation": "new", "record_id": record.get("id"), "needs_extraction": True}
 
         record_id = current["id"]
         if current.get("content_hash") == content_hash:
-            self.client.table("competitions").update({
-                "last_seen_at": now,
-                "refresh_job_id": refresh_job_id,
-            }).eq("id", record_id).execute()
+            try:
+                self.client.table("competitions").update({
+                    "last_seen_at": now,
+                    "refresh_job_id": refresh_job_id,
+                }).eq("id", record_id).execute()
+            except Exception as exc:
+                logger.warning("更新时间戳失败(跳过): %s - %s", item.get("title", "")[:40], exc)
             return {"operation": "unchanged", "record_id": record_id, "needs_extraction": False}
 
         row.update({
@@ -398,7 +458,11 @@ class SupabaseStore:
             "refresh_job_id": refresh_job_id,
             "updated_at": now,
         })
-        self.client.table("competitions").update(row).eq("id", record_id).execute()
+        try:
+            self.client.table("competitions").update(row).eq("id", record_id).execute()
+        except Exception as exc:
+            logger.warning("更新失败(跳过): %s - %s", item.get("title", "")[:40], exc)
+            return {"operation": "unchanged", "record_id": record_id, "needs_extraction": False}
         return {"operation": "changed", "record_id": record_id, "needs_extraction": True}
 
     def upsert_item(self, item: dict) -> str:
@@ -433,12 +497,21 @@ class SupabaseStore:
                 "organizer": "organizer",
                 "deadline": "regist_end",
                 "registration_time": "regist_start",
+                "contest_start": "contest_start",
+                "contest_end": "contest_end",
                 "type": "category",
             }.items():
                 value = structured.get(source_field)
                 if value not in (None, "", "unknown"):
+                    if column == "regist_start":
+                        # registration_time 是报名时间范围描述（如"2026年9月1日至9月30日"），
+                        # regist_start 列约定存起始日期，提取首个日期，提取不到置空
+                        value = _extract_first_date(str(value))
                     values[column] = value
-        self.client.table("competitions").update(values).eq("id", record_id).execute()
+        try:
+            self.client.table("competitions").update(values).eq("id", record_id).execute()
+        except Exception as exc:
+            logger.warning("抽取结果回填失败(跳过): record_id=%s - %s", record_id, exc)
 
     def create_refresh_job(
         self,
@@ -491,7 +564,7 @@ class SupabaseStore:
         避免 Supabase 查询超时。
         """
         query = self.client.table("competitions").select(
-            "id,title,description,source,category,contest_end,collected_at"
+            "id,title,description,source,category,regist_end,contest_end,collected_at"
         ).limit(2000)
         if source:
             query = query.eq("source", source)
@@ -517,32 +590,27 @@ class SupabaseStore:
         return all_rows
 
     def delete_expired(self) -> int:
-        """删除 regist_end 已明确过期的竞赛，返回删除条数。
+        """删除已过期的竞赛，返回删除条数。
 
-        仅删除 regist_end 非空、可解析且日期 < 今天的条目。
-        regist_end 为空或无法解析的保留，避免误删。
+        优先按报名截止（regist_end）判断；regist_end 为空时按比赛结束
+        （contest_end）判断，避免 LIVE 等无报名截止字段的已结束竞赛
+        永远清理不掉。两者均缺失或无法解析的保留，避免误删。
         """
-        from datetime import date
         today = date.today()
         deleted = 0
 
-        # 先查全表 regist_end（轻量字段），找到过期 ID
+        # 先查全表（含 contest_end），找到过期 ID
         result = (
             self.client.table("competitions")
-            .select("id,regist_end")
+            .select("id,regist_end,contest_end")
             .limit(2000)
             .execute()
         )
-        expired_ids = []
-        for row in (result.data or []):
-            end_str = str(row.get("regist_end", "")).strip()
-            if not end_str:
-                continue
-            try:
-                if date.fromisoformat(end_str[:10]) < today:
-                    expired_ids.append(row["id"])
-            except (ValueError, TypeError):
-                continue
+        expired_ids = [
+            row["id"]
+            for row in (result.data or [])
+            if self._is_expired(row, today)
+        ]
 
         # 逐条删除（Supabase REST 不支持 IN delete）
         for rid in expired_ids:
@@ -646,30 +714,17 @@ class SupabaseStore:
 
     @staticmethod
     def filter_active(items: list[dict]) -> list[dict]:
-        """过滤已过期的竞赛（regist_end 日期已过今天）。
+        """过滤已过期的竞赛。
 
-        只过滤能明确判断为过期的条目：regist_end 为空或无法解析
-        的保留，避免误删有效数据。
+        优先按报名截止（regist_end），为空时按比赛结束（contest_end）；
+        两者均缺失或无法解析的保留，避免误删。
         """
-        from datetime import date
-
-        kept: list[dict] = []
         today = date.today()
-        for it in items:
-            end_str = str(it.get("regist_end", "")).strip()
-            if not end_str:
-                kept.append(it)
-                continue
-            try:
-                # 只取日期部分 YYYY-MM-DD
-                end_date = date.fromisoformat(end_str[:10])
-                if end_date >= today:
-                    kept.append(it)
-                # else: 已过期，丢弃
-            except (ValueError, TypeError):
-                # 无法解析的日期视为未知，保留
-                kept.append(it)
-        return kept
+        return [
+            item
+            for item in items
+            if not SupabaseStore._is_expired(item, today)
+        ]
 
     def _get_candidates(
         self,
@@ -826,6 +881,26 @@ class SupabaseStore:
         if limit and limit > 0:
             return [candidates[i] for i, _ in indexed[:limit]]
         return [candidates[i] for i, _ in indexed]
+
+    @staticmethod
+    def _is_expired(item: dict, today: Optional[date] = None) -> bool:
+        """判断竞赛是否已过期。
+
+        优先用报名截止（regist_end）；LIVE 录播课等无独立报名截止的记录
+        （regist_end 为空）用比赛结束（contest_end）判断，避免已结束的
+        比赛因缺报名截止字段而永远清理不掉。
+        """
+        today = today or date.today()
+        for field in ("regist_end", "contest_end"):
+            end_str = str(item.get(field, "") or "").strip()
+            if not end_str:
+                continue
+            try:
+                if date.fromisoformat(end_str[:10]) < today:
+                    return True
+            except (ValueError, TypeError):
+                continue
+        return False
 
     # ---- RAG 全文搜索 ----
 

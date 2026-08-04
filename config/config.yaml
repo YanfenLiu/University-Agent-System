@@ -15,17 +15,16 @@ info_collect:
   request_delay_max: 1.5      # 翻页请求间隔最大值（秒）
   max_pages: 3                # 每个数据源最大翻页数（首次全量可调大）
   client_timeout: 10          # 单个 HTTP 请求超时（秒）
-  detail_limit: 30            # 每个源最多抓取详情条数（控制总耗时）
-  crawl_timeout: 500          # 单次采集总超时（秒），5站全爬约需2-3分钟
+  crawl_timeout: 1200         # 单次采集总超时（秒）。detail_limit 已调大抓全详情，需更长耗时
   sources:
     saikr:
       enabled: true
       max_pages: 3
-      detail_limit: 20        # 赛氪详情含正文，少抓几条
-    jingsai52:
+      detail_limit: 100       # 抓满全部条目详情，保证 description 完整
+    52jingsai:
       enabled: true
       max_pages: 3
-      detail_limit: 10        # HTML 详情页较慢，少抓几条
+      detail_limit: 100       # 列表摘要常被截断或不含时间，靠详情页补全
     ali_tianchi:
       enabled: true
       max_pages: 3
@@ -33,11 +32,11 @@ info_collect:
     heywhale:
       enabled: true
       max_pages: 3
-      detail_limit: 5         # 详情 API 8 个 Tab，数据量大只抓 5 条
+      detail_limit: 100       # 列表 API 不返回 RegisterEndDate，须抓详情才能拿到报名截止
     datafountain:
       enabled: true
       max_pages: 3
-      detail_limit: 5         # DF 列表已有核心字段，详情只补正文
+      detail_limit: 100       # 抓满全部条目详情，保证 description 完整
 
 storage:
   # backend: json（本地文件）或 supabase（云端 PostgreSQL）
