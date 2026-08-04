@@ -23,7 +23,7 @@ FIELDS = [
     "title", "url", "source", "publish_date", "description",
     "organizer", "organizer_list", "co_organizers", "supporters",
     "regist_start", "regist_end", "contest_start", "contest_end",
-    "category", "level", "attachments", "raw_text",
+    "category", "level", "attachments", "raw_text", "summary",
 ]
 
 _COMPETITIONS_DDL = """\
@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS competitions (
     level         TEXT NOT NULL DEFAULT '',
     attachments   JSONB NOT NULL DEFAULT '[]'::jsonb,
     raw_text      TEXT NOT NULL DEFAULT '',
+    summary       TEXT NOT NULL DEFAULT '',
     collected_at  TEXT NOT NULL DEFAULT '',
     updated_at    TEXT NOT NULL DEFAULT '',
     UNIQUE (url, source)

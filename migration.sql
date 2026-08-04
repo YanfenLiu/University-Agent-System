@@ -78,4 +78,7 @@ CREATE INDEX IF NOT EXISTS idx_refresh_jobs_finished_at ON refresh_jobs (finishe
 
 -- Keep timestamptz columns timezone-safe while displaying new database sessions
 -- (including Supabase Table Editor sessions) in Beijing time.
+-- InfoExtractAgent 抽取结果独立存储，不再复用 description 字段。
+ALTER TABLE competitions ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT '';
+
 ALTER DATABASE postgres SET timezone TO 'Asia/Shanghai';

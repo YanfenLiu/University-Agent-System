@@ -113,10 +113,15 @@ system: |
   - 如果没有提供，填空字符串 ""
 
   ### summary（项目摘要）
-  - 2-3 句话概括项目核心信息
-  - 第一句：项目名称和定位
-  - 第二句：面向对象和截止时间
-  - 第三句（可选）：核心亮点或奖励情况
+  - 精炼概括项目的核心差异化信息，让读者一眼判断是否适合自己
+  - 控制字数在 80-150 字，过短信息量不足，过长失去摘要意义
+  - 不要机械堆砌 title、deadline、organizer 等已单独抽取的字段值
+  - 优先提取：比赛/项目的特殊形式（线上/线下、赛制轮次、是否答辩）、
+    与其他同类活动的差异点、参赛能获得的核心收益（奖金、证书、推免资格加分）、
+    是否有培训或指导资源
+  - 如果原文是标准竞赛通知，应包含：项目背景或主题关键词 + 参赛形式和级别 + 奖励亮点
+  - 如果原文是科研立项通知，应包含：资助方向 + 经费与周期 + 成果要求
+  - 原文信息不足时不必强凑长句，简明说清已有信息即可
 
   ## 输出格式（严格 JSON）
   你必须只输出一个合法的 JSON 对象，不要包含任何 markdown 标记、解释文字或代码块符号。
@@ -125,6 +130,7 @@ system: |
   ```json
   {
     "title": "字符串",
+    "summary": "字符串",
     "type": "学科竞赛|科研项目|创新创业|社会实践|其他",
     "deadline": "YYYY-MM-DD 或 unknown",
     "registration_time": "字符串 或 unknown",
@@ -141,8 +147,7 @@ system: |
     },
     "reward": "字符串 或 unknown",
     "organizer": "字符串 或 unknown",
-    "source_url": "字符串",
-    "summary": "字符串"
+    "source_url": "字符串"
   }
   ```
 
@@ -150,6 +155,7 @@ system: |
   ```json
   {
     "title": "全国大学生人工智能竞赛",
+    "summary": "教育部主办的国家级本科AI竞赛，线上初赛+线下决赛两轮赛制，优秀作品可获推免加分。参赛需提交可运行原型，提供免费算力支持。",
     "type": "学科竞赛",
     "deadline": "2026-08-15",
     "registration_time": "2026年6月1日至2026年8月15日",
@@ -164,8 +170,7 @@ system: |
     },
     "reward": "国家级奖项",
     "organizer": "教育部",
-    "source_url": "https://example.com/ai-competition",
-    "summary": "面向全国计算机相关专业本科生的AI创新竞赛，需组队参赛，报名截止2026年8月15日。"
+    "source_url": "https://example.com/ai-competition"
   }
   ```
 
@@ -225,7 +230,12 @@ system_batch: |
   - tags：主题标签，2-5 个关键词
   - category：细分类别，无法确定时 "unknown"
 
-  ### reward / organizer / source_url / summary
+  ### summary（项目摘要）
+  - 精炼概括项目的核心差异化信息（80-150字），让读者一眼判断是否适合自己
+  - 不要机械堆砌已在其他字段中出现的 title、deadline、organizer 等值
+  - 优先提取：比赛形式（线上/线下、赛制轮次）、与同类活动的差异点、参赛能获得的核心收益
+
+  ### reward / organizer / source_url
   - 按原文提取，缺失时填 "unknown" 或 ""
 
   ## 批量模式输出格式
@@ -234,14 +244,14 @@ system_batch: |
   ```json
   [
     {
-      "title": "...", "type": "学科竞赛", "deadline": "YYYY-MM-DD",
+      "title": "...", "summary": "...", "type": "学科竞赛", "deadline": "YYYY-MM-DD",
       "registration_time": "...", "requirements": {...},
-      "reward": "...", "organizer": "...", "source_url": "...", "summary": "..."
+      "reward": "...", "organizer": "...", "source_url": "..."
     },
     {
-      "title": "...", "type": "科研项目", "deadline": "YYYY-MM-DD",
+      "title": "...", "summary": "...", "type": "科研项目", "deadline": "YYYY-MM-DD",
       "registration_time": "...", "requirements": {...},
-      "reward": "...", "organizer": "...", "source_url": "...", "summary": "..."
+      "reward": "...", "organizer": "...", "source_url": "..."
     }
   ]
   ```
@@ -275,6 +285,7 @@ output_schema:
   type: object
   required:
     - title
+    - summary
     - type
     - deadline
     - registration_time
@@ -282,9 +293,10 @@ output_schema:
     - reward
     - organizer
     - source_url
-    - summary
   properties:
     title:
+      type: string
+    summary:
       type: string
     type:
       type: string
@@ -345,13 +357,12 @@ output_schema:
       type: string
     source_url:
       type: string
-    summary:
-      type: string
 
 # ── Prompt 版本记录 ────────────────────────────────────────────
-version: "2.0"
+version: "3.0"
 created: "2026-07-08"
-updated: "2026-07-17"
+updated: "2026-07-31"
 changelog:
   - "v1.0 (2026-07-08): 初始版本，定义 10 个抽取字段、System Prompt、User Prompt 模板及 JSON Schema"
-  - "v2.0 (2026-07-17): 与成员C对接后重构 requirements 为嵌套对象（7子字段），移除 target_students（整合进 requirements.target_grades + target_education），新增完整 JSON 示例，更新自检清单"
+  - "v2.0 (2026-07-17): 与成员C对接后重构 requirements 为嵌套对象（7子字段），移除 target_students"
+  - "v3.0 (2026-07-31): 重写 summary 抽取指引（从「字段拼接模板」改为「增量差异化信息」策略）；summary 字段从 JSON 末尾迁移到 title 之后以减轻注意力衰减；示例升级为高质量真实场景示例"

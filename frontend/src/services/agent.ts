@@ -37,7 +37,7 @@ export async function sendMessage(
         success: false,
         session_id: sessionId,
         response: {
-          text: "后端服务版本尚未更新，请先在 Render 部署 main 分支的最新提交后再试。",
+          text: "抱歉，当前服务版本暂时不一致，需要完成后端更新后才能继续使用。",
           type: "error",
           files: [],
           recommendations: [],
@@ -66,7 +66,7 @@ export async function sendMessage(
       success: isSuccess,
       session_id: sessionId,
       response: {
-        text: (responseData?.text as string) || (isSuccess ? "Agent 执行完毕。" : "请告诉我你的专业和年级，以便为你推荐竞赛。"),
+        text: (responseData?.text as string) || (isSuccess ? "已经处理好了，你可以继续告诉我想重点了解哪一部分。" : "还需要了解你的专业和年级，才能继续推荐。"),
         type: safeType,
         files: Array.isArray(responseData?.files)
           ? responseData.files.map((item) => apiUrl(String(item)))
@@ -89,7 +89,7 @@ export async function sendMessage(
       success: false,
       session_id: sessionId,
       response: {
-        text: "智能体暂时无法连接，请检查后端服务。",
+        text: "抱歉，当前暂时无法连接智能服务。你的对话内容已经保留，可以稍后再试。",
         type: "error",
         files: [],
         recommendations: [],

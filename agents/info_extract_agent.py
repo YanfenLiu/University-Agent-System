@@ -293,7 +293,8 @@ class InfoExtractAgent:
         raw_items = inner.get("raw_items", [])
         total = len(raw_items)
 
-        api_available = not self._should_use_mock()
+        mock_enabled = self._should_use_mock()
+        api_available = mock_enabled or self._llm_is_configured()
         if not api_available:
             print("[提取] API 未配置或不可用，跳过所有 LLM 调用，使用缓存数据")
 
@@ -341,11 +342,9 @@ class InfoExtractAgent:
                                                   raw_items, structured_items)
 
         elif needs_llm_raw and not api_available:
-            # API 不可用，所有待提取项用缓存字段兜底
-            print(f"[提取] API 不可用，{len(needs_llm_raw)} 条待提取项使用缓存字段兜底")
-            for offset, global_i in enumerate(needs_llm_indices):
-                self._use_cache_fallback(global_i, needs_llm_raw[offset],
-                                          raw_items, structured_items)
+            raise RuntimeError(
+                "当前无法连接可靠的信息抽取服务，已停止处理以避免生成模拟结果。"
+            )
         else:
             print(f"[提取] 全部 {total} 条自带结构化数据，跳过 LLM 提取")
 
@@ -372,7 +371,9 @@ class InfoExtractAgent:
             "deadline": chunk_item.get("regist_end", "") or "unknown",
             "registration_time": chunk_item.get("regist_start", "") or "unknown",
             "organizer": chunk_item.get("organizer", "") or "unknown",
-            "summary": str(chunk_item.get("description", "") or chunk_item.get("title", "unknown")),
+            "summary": self._rule_based_summary(
+                str(chunk_item.get("description", "") or chunk_item.get("title", "unknown"))
+            ),
             "type": "其他",
             "reward": "unknown",
             "requirements": dict(self.FIELD_DEFAULTS["requirements"]),
@@ -391,7 +392,7 @@ class InfoExtractAgent:
             result["organizer"] = str(raw_item["organizer"])
         if result.get("summary") in missing:
             description = str(raw_item.get("description", "")).strip()
-            result["summary"] = description[:500] or str(raw_item.get("title", "unknown"))
+            result["summary"] = self._rule_based_summary(description) or str(raw_item.get("title", "unknown"))
 
         if result.get("deadline") in missing:
             deadline = str(raw_item.get("regist_end", "")).strip()
@@ -436,8 +437,13 @@ class InfoExtractAgent:
             title = item.get("title", "") or "未知项目"
             url = item.get("url", item.get("source_url", ""))
             raw_text = item.get("raw_text", "")
-            # 正文截断：10 条 × 3000 字符 ≈ 3 万 tokens，远低于 1M 上限
-            raw_text = raw_text[:3000]
+            # 正文智能截断：取前 1500 + 后 1500 字符（头尾含核心信息，中段多为规则细节）
+            head = raw_text[:1500]
+            tail = raw_text[-1500:] if len(raw_text) > 3000 else ""
+            if tail:
+                raw_text = head + "\n...(中段省略)...\n" + tail
+            else:
+                raw_text = head
             parts.append(
                 f"--- 第{i}条 ---\n"
                 f"标题：{title}\n"
@@ -565,7 +571,89 @@ class InfoExtractAgent:
         validated["_source_title"] = raw_item.get("title", "")
         validated["_source"] = raw_item.get("source", "")
         validated["_collected_at"] = raw_item.get("collected_at", "")
+        # P2-1: 统一后处理校验 summary 质量
+        validated["summary"] = self._normalize_summary(validated.get("summary", ""))
         return validated
+
+    # ── 缓存直通路径：摘要生成 ─────────────────────────
+
+    def _generate_cache_summary(self, text: str) -> str:
+        """对缓存直通路径的原始 description/raw_text 调用 LLM 生成精炼摘要。"""
+        if not text or len(text) < 20:
+            return text
+        # 截断到 2000 字符 — 摘要不需要完整原文
+        source = text[:2000]
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是一个信息摘要助手。将下面的竞赛/科研项目文本精炼为一段"
+                    "80-150字的中文摘要。提取核心差异化信息而非堆砌字段值："
+                    "包括比赛形式特点、与同类活动的差异、参赛可获得的收益。"
+                    "不要输出任何格式标记，直接返回摘要文本。"
+                ),
+            },
+            {"role": "user", "content": source},
+        ]
+        try:
+            response_text = self._call_api(messages, max_tokens=300)
+            result = str(response_text or "").strip()
+            # 清理可能残留的 markdown 标记
+            result = result.strip("`\"' '\n\r\t")
+            if result and len(result) >= 15:
+                return result
+        except Exception as e:
+            print(f"  [摘要生成] LLM 调用失败: {e}，回退规则提取")
+        return self._rule_based_summary(text)
+
+    @staticmethod
+    def _rule_based_summary(text: str) -> str:
+        """规则提取摘要：取前 2 句；原文很长时附上末尾一句（含奖励/联系方式等信息）。"""
+        if not text or len(text) < 20:
+            return text or "unknown"
+        import re as _re
+        sentences = _re.split(r"[。！；\n]", text)
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 6]
+        if not sentences:
+            return text[:150].strip()
+        # 取前两句
+        result = "。".join(sentences[:2]) + "。"
+        # 如果原文很长（>500 字），附上最后一句
+        if len(text) > 500 and len(sentences) > 3:
+            last = sentences[-1]
+            if last and last != sentences[0] and last != sentences[1]:
+                if len(result) + len(last) + 1 <= 200:
+                    result = result.rstrip("。") + "；" + last + "。"
+        result = result[:200].strip()
+        return result
+
+    # ── 摘要后处理校验 ──────────────────────────────────
+
+    @staticmethod
+    def _normalize_summary(summary: str) -> str:
+        """统一校验并修复 summary 字段质量。
+
+        - 过长（>350 字）→ 截断
+        - 含 HTML 标签 → 清洗
+        - 实质为空 → 标记
+        """
+        import re as _re
+        if not summary or summary in ("unknown", ""):
+            return summary
+        # 清洗 HTML 标签
+        cleaned = _re.sub(r"<[^>]+>", "", summary)
+        cleaned = _re.sub(r"\s{2,}", " ", cleaned).strip()
+        if not cleaned:
+            return "unknown"
+        # 过长截断
+        if len(cleaned) > 350:
+            # 尝试在句号处截断
+            break_at = cleaned.rfind("。", 0, 320)
+            if break_at > 100:
+                cleaned = cleaned[:break_at + 1]
+            else:
+                cleaned = cleaned[:320] + "…"
+        return cleaned
 
     def _build_fallback_item(self, raw_item: dict, error: str) -> dict:
         """构造单条抽取失败时的占位条目。"""
@@ -617,15 +705,27 @@ class InfoExtractAgent:
         return self._parse_llm_json(response_text)
 
     def _should_use_mock(self) -> bool:
-        """检查 API 是否可用，不可用则回退 Mock 模式。"""
+        """仅在测试环境或显式配置时允许使用 Mock。"""
+        testing_config = self.config.get("testing", {})
+        explicitly_enabled = bool(
+            isinstance(testing_config, dict)
+            and testing_config.get("mock_enabled", False)
+        )
+        env_enabled = os.getenv("SAIZHITONG_MOCK_ENABLED", "").lower() in {
+            "1", "true", "yes"
+        }
+        return explicitly_enabled or env_enabled
+
+    def _llm_is_configured(self) -> bool:
+        """生产抽取必须具备真实模型依赖与凭证。"""
         if not self._openai_available:
-            return True
+            return False
         llm_config = self.config.get("llm", {})
         api_config = self.config.get("api", {})
         api_key_env = llm_config.get("api_key_env", "DEEPSEEK_API_KEY")
         api_key = api_config.get("key", "") or os.getenv(api_key_env, "")
         base_url = api_config.get("base_url", "") or llm_config.get("base_url", "")
-        return not api_key or not base_url
+        return bool(api_key and base_url)
 
     def _call_api(self, messages: list, max_tokens: int = 0) -> str:
         """
@@ -634,6 +734,10 @@ class InfoExtractAgent:
         """
         if self._should_use_mock():
             return self._mock_extract(messages)
+        if not self._llm_is_configured():
+            raise RuntimeError(
+                "当前无法连接可靠的信息抽取服务，已停止处理以避免生成模拟结果。"
+            )
 
         llm_config = self.config.get("llm", {})
         model_config = self.config.get("model", {}) or llm_config

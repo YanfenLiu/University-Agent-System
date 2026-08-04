@@ -12,6 +12,7 @@ def material_config(tmp_path: Path):
             "model": "test-model",
             "timeout": 17,
         },
+        "testing": {"mock_enabled": True},
         "agent": {
             "max_retry": 2,
             "material_agent": {
@@ -141,3 +142,20 @@ def test_main_agent_runs_material_end_to_end(tmp_path, monkeypatch):
     agent_result = result["data"]["agent_results"][0]
     assert agent_result["agent_name"] == "material_agent"
     assert agent_result["status"] == "success"
+
+
+def test_production_material_failure_does_not_expose_internal_config(tmp_path, monkeypatch):
+    monkeypatch.delenv("MATERIAL_TEST_MISSING_KEY", raising=False)
+    config = material_config(tmp_path)
+    config.pop("testing")
+    result = MaterialAgent(config).run(standard_input({
+        "project_info": {"project_name": "校园智能竞赛助手"},
+        "material_type": "generic_schedule",
+    }))
+
+    assert result["status"] == "failed"
+    visible = f"{result.get('message', '')} {result.get('data', {})}"
+    assert "API Key" not in visible
+    assert "Base URL" not in visible
+    assert "Traceback" not in visible
+    assert "[Config Error]" not in visible

@@ -4,6 +4,9 @@ from agents.info_extract_agent import InfoExtractAgent
 from agents.main_agent import MainAgent
 
 
+MOCK_CONFIG = {"testing": {"mock_enabled": True}}
+
+
 REQUIRED_OUTPUT_FIELDS = {
     "task_id", "agent_name", "status", "data", "message",
     "error", "next_action", "metadata",
@@ -34,7 +37,7 @@ def test_validation_failure_uses_standard_output():
 
 
 def test_mock_extraction_returns_structured_item():
-    agent = InfoExtractAgent(config={})
+    agent = InfoExtractAgent(config=MOCK_CONFIG)
     result = agent.run(standard_input({"raw_items": [{
         "title": "数学建模竞赛通知",
         "url": "https://example.com/notice",
@@ -50,7 +53,7 @@ def test_mock_extraction_returns_structured_item():
 
 
 def test_main_agent_adapts_pasted_notification():
-    main_agent = MainAgent(config={})
+    main_agent = MainAgent(config=MOCK_CONFIG)
     original = standard_input({
         "data_source": "upload",
         "source_url": "https://example.com/source",
@@ -64,7 +67,7 @@ def test_main_agent_adapts_pasted_notification():
 
 
 def test_main_agent_uses_collection_result():
-    main_agent = MainAgent(config={})
+    main_agent = MainAgent(config=MOCK_CONFIG)
     collected = [{"title": "采集结果", "raw_text": "竞赛通知正文"}]
     adapted = main_agent._adapt_info_extract_input(
         standard_input({}), {"info_collect_result": {"raw_items": collected}}
@@ -77,6 +80,7 @@ def test_mock_extraction_preserves_collector_fields(monkeypatch):
     monkeypatch.delenv("INFO_EXTRACT_TEST_NO_KEY", raising=False)
     agent = InfoExtractAgent(config={
         "llm": {"api_key_env": "INFO_EXTRACT_TEST_NO_KEY"},
+        "testing": {"mock_enabled": True},
     })
     request = standard_input({
         "raw_items": [{
@@ -103,7 +107,7 @@ def test_mock_extraction_preserves_collector_fields(monkeypatch):
 
 
 def test_main_agent_runs_pasted_notice_end_to_end():
-    main_agent = MainAgent(config={})
+    main_agent = MainAgent(config=MOCK_CONFIG)
     request = standard_input({
         "data_source": "upload",
         "notification_text": "关于举办2026年大学生程序设计竞赛的通知。",
@@ -148,3 +152,20 @@ def test_main_llm_configuration_is_used(monkeypatch):
 
     assert response == '{"title": "configured"}'
     assert captured["model"] == "configured-model"
+
+
+def test_production_does_not_silently_use_mock(monkeypatch):
+    monkeypatch.delenv("INFO_EXTRACT_PRODUCTION_NO_KEY", raising=False)
+    agent = InfoExtractAgent(config={
+        "llm": {
+            "api_key_env": "INFO_EXTRACT_PRODUCTION_NO_KEY",
+            "base_url": "https://example.com/v1",
+        }
+    })
+    result = agent.run(standard_input({"raw_items": [{
+        "title": "测试通知",
+        "raw_text": "测试正文",
+    }]}))
+
+    assert result["status"] == "failed"
+    assert not result["data"].get("structured_items")

@@ -214,8 +214,6 @@ def polish_one_recommendation(
             "organizer": rec.get("organizer", ""),
             "prestige_tier": rec.get("prestige_tier", ""),
             "category_key": rec.get("category_key", ""),
-            "match_score": rec.get("match_score"),
-            "recommend_level": rec.get("recommend_level"),
             "is_backup": rec.get("is_backup", False),
         },
         "matched_signals": (rec.get("matched_signals") or [])[:8],
@@ -225,12 +223,14 @@ def polish_one_recommendation(
     }
 
     system = (
-        "你是大学生竞赛顾问。根据给定 JSON 事实撰写推荐说明。"
+        "你是专业但不生硬的大学生竞赛顾问。根据给定 JSON 事实撰写推荐说明。"
         "只能使用提供的信息，禁止编造奖项、技能或截止日期。"
         "输出严格 JSON 对象，字段："
         '{"reason":"2到3句中文推荐理由","risk":"1句风险或注意点"}。'
-        "reason 要自然流畅，像顾问口头说明，不要出现 <-> 或「兴趣匹配度(xx分)」这种模板。"
-        "不要输出 Markdown 代码块以外的多余文字。"
+        "reason 用2到3句简洁中文，先说明与用户需求的关系，再说明值得了解的特点。"
+        "risk 要说明需要确认的事项，不要主动评价用户能力或目标是否合理。"
+        "表达自然、客观，不替用户做决定，不使用表情符号，不展示分数、等级、S/A/B/C，"
+        "不要出现 <-> 或「兴趣匹配度」这类内部指标。只输出JSON，不要使用Markdown代码块。"
     )
     user_content = (
         "请润色以下推荐文案：\n"
