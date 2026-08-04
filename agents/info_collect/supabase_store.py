@@ -125,11 +125,16 @@ def _extract_project_ref(supabase_url: str) -> str | None:
 
 
 def _build_pg_dsn(supabase_url: str, password: str) -> str:
-    """Build a direct PostgreSQL connection DSN (bypasses PgBouncer for DDL)."""
+    """Build a direct PostgreSQL connection DSN (bypasses PgBouncer for DDL).
+
+    密码可能含 @ / : 等特殊字符（如 "@Agent147369."），必须 URL 编码，
+    否则会被误解析为主机名/端口分隔符导致连接失败。
+    """
+    from urllib.parse import quote_plus
     ref = _extract_project_ref(supabase_url)
     if not ref:
         raise ValueError(f"Cannot extract project ref from SUPABASE_URL: {supabase_url}")
-    return f"postgresql://postgres.{ref}:{password}@db.{ref}.supabase.co:5432/postgres"
+    return f"postgresql://postgres.{ref}:{quote_plus(password)}@db.{ref}.supabase.co:5432/postgres"
 
 
 class _EmbeddingWorker:

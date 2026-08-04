@@ -89,11 +89,19 @@ class HeywhaleParser(BaseParser):
     # ---- merge_detail ----
 
     def merge_detail(self, item: dict, detail_fields: dict) -> dict:
-        """合并详情到列表项，列表已有值不覆盖，但 description 取更长的。"""
+        """合并详情到列表项，列表已有值不覆盖，但 description 取更长的。
+
+        contest_end/contest_start 特殊处理：详情(stages 时间线)解析出的真实时间
+        应覆盖列表的远期占位（如 2035），否则时间线时间永远被列表占位盖住。
+        """
         # 列表有的不覆盖，只填列表缺失的
         for key, val in detail_fields.items():
             if key == "description":
                 if val and len(val) > len(item.get("description", "")):
+                    item[key] = val
+            elif key in ("contest_start", "contest_end"):
+                # 详情有时间线值就覆盖列表值（列表 EndDate 常是远期占位）
+                if val:
                     item[key] = val
             elif not item.get(key) and val:
                 item[key] = val
@@ -126,9 +134,11 @@ class HeywhaleParser(BaseParser):
         org = detail.get("Organization", {})
         org_name = org.get("Name", "") if isinstance(org, dict) else ""
 
-        # Stages → 赛程信息
+        # Stages → 赛程信息（网页名称下方的时间线，是真实比赛起止时间）
         stages = detail.get("Stages", [])
         stage_info = []
+        stage_ends = []
+        stage_starts = []
         for s in (stages or []):
             if isinstance(s, dict):
                 stage_info.append({
@@ -136,6 +146,15 @@ class HeywhaleParser(BaseParser):
                     "start": s.get("StartDate", ""),
                     "end": s.get("EndDate", ""),
                 })
+                end = _fmt_iso(s.get("EndDate"))
+                start = _fmt_iso(s.get("StartDate"))
+                if end:
+                    stage_ends.append(end)
+                if start:
+                    stage_starts.append(start)
+        # 时间线的最后结束时间作为真实比赛结束（列表 EndDate 常是 2035 远期占位）
+        stages_contest_end = max(stage_ends) if stage_ends else ""
+        stages_contest_start = min(stage_starts) if stage_starts else ""
 
         # 从 Tabs 提取正文（Markdown 格式）
         tabs = detail.get("Tabs", [])
@@ -161,8 +180,8 @@ class HeywhaleParser(BaseParser):
                 detail.get("RegisterEndDate")
                 or (detail.get("EndDate") if detail.get("DetailType") == "LIVE" else None)
             ),
-            "contest_start": _fmt_iso(detail.get("StartDate")),
-            "contest_end": _fmt_iso(detail.get("EndDate")),
+            "contest_start": stages_contest_start or _fmt_iso(detail.get("StartDate")),
+            "contest_end": stages_contest_end or _fmt_iso(detail.get("EndDate")),
             "category": TYPE_MAP.get(detail.get("DetailType", ""), detail.get("DetailType", "")),
             "level": "",
             "attachments": [],
