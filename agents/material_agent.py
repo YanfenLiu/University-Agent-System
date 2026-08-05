@@ -461,7 +461,7 @@ class MaterialAgent:
         model_config = config.get("model", {}) or llm_config
         self.model_provider = model_config.get("provider", "")
         self.model_name = model_config.get("name", "") or model_config.get("model", "")
-        self.temperature = model_config.get("temperature", 0.7)
+        self.temperature = model_config.get("temperature", 0.3)
         self.max_tokens = model_config.get("max_tokens", 4096)
 
         # API 配置
