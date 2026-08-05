@@ -1452,7 +1452,8 @@ class MaterialAgent:
             dict: {"cover": {}, "sections": [...], "raw_text": "..."}
         """
         # ---- 策略 1: 提取 JSON 代码块 ----
-        json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', llm_response, re.DOTALL)
+        # 匹配 ```json ... ``` 或 ``` ... ```，兼容 \r\n
+        json_match = re.search(r'```(?:json)?\s*\r?\n([\s\S]*?)\r?\n\s*```', llm_response)
         if json_match:
             try:
                 data = json.loads(json_match.group(1).strip())
@@ -1655,6 +1656,9 @@ class MaterialAgent:
                 continue
             heading = str(item.get("title") or "").strip()
             body = str(item.get("content") or "").strip()
+            # 清理残留 JSON 标记
+            body = re.sub(r'```(?:json)?\s*\n?', '', body)
+            body = re.sub(r'\n?\s*```', '', body)
             if heading:
                 document.add_heading(heading, level=1)
             self._write_markdown_blocks(document, body)
