@@ -467,7 +467,9 @@ class MaterialAgent:
         # API 配置
         api_config = config.get("api", {})
         api_key_env = llm_config.get("api_key_env", "DEEPSEEK_API_KEY")
-        self.api_key = api_config.get("key", "") or os.environ.get(api_key_env, "")
+        self.api_key = (api_config.get("key", "")
+                         or llm_config.get("api_key", "")
+                         or os.environ.get(api_key_env, ""))
         self.api_base_url = api_config.get("base_url", "") or llm_config.get("base_url", "")
         self.api_timeout = api_config.get("timeout", llm_config.get("timeout", 60))
         self.max_retry = api_config.get(
@@ -1353,32 +1355,40 @@ class MaterialAgent:
         if (not self.api_key or not self.api_base_url) and not mock_enabled:
             raise RuntimeError("当前无法连接材料生成服务，请稍后重试。")
         if self.api_key and self.api_base_url:
-            try:
-                client = OpenAI(
-                    api_key=self.api_key,
-                    base_url=self.api_base_url,
-                    timeout=self.api_timeout,
-                )
+            last_error = None
+            for attempt in range(2):
+                try:
+                    client = OpenAI(
+                        api_key=self.api_key,
+                        base_url=self.api_base_url,
+                        timeout=self.api_timeout,
+                    )
 
-                response = client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
+                    response = client.chat.completions.create(
+                        model=self.model_name,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens,
+                    )
 
-                content = response.choices[0].message.content
-                usage = response.usage
-                if usage:
-                    print(f"    [LLM] {self.model_provider}/{self.model_name} "
-                          f"tokens: {usage.total_tokens} (in:{usage.prompt_tokens} out:{usage.completion_tokens})")
-                return content
+                    content = response.choices[0].message.content
+                    usage = response.usage
+                    if usage:
+                        print(f"    [LLM] {self.model_provider}/{self.model_name} "
+                              f"tokens: {usage.total_tokens} (in:{usage.prompt_tokens} out:{usage.completion_tokens})")
+                    return content
 
-            except Exception as e:
-                raise RuntimeError("材料暂时没有生成成功，请稍后重试。") from e
+                except Exception as e:
+                    last_error = e
+                    if attempt == 0:
+                        print(f"    [LLM] 第1次失败: {e}，1秒后重试...")
+                        import time
+                        time.sleep(1)
+
+            raise RuntimeError("材料暂时没有生成成功，请稍后重试。") from last_error
 
         # ---- Mock 模式（API 未配置或调用失败时）----
         if output_sections is None:
