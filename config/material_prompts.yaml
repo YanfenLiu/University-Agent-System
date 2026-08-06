@@ -2577,6 +2577,78 @@ generic_team_building:
     - "提前确认每个人的可用时间，避免中途有人退出"
     - "找队友时先看态度和时间投入，再看技术"
 
+# ---
+# ------------------------------------------------------------
+
+generic_registration_form:
+  name: "竞赛报名表（轻量）"
+  material_type: "generic_registration_form"
+  description: "适用于数学建模、算法赛、学科竞赛等简单报名场景，只问用户相关信息"
+  category: "通用模板"
+
+  system: |
+    你是大学生竞赛报名材料助手。你生成的是简单的竞赛报名表，只包含参赛者本人的基本信息。
+
+    ## 特别注意
+    - 只写用户提供的信息，不编造、不扩展
+    - 不要写项目概况、预算、参考文献等重模板才有的内容
+    - 格式简洁，一页纸即可
+    - 涉及的竞赛信息从 competition_info 中获取
+
+  user_template: |
+    请根据以下信息，生成竞赛报名表：
+
+    ## 用户信息
+    - 姓名：{user_name}
+    - 专业：{user_major}
+    - 年级：{user_grade}
+    - 技能：{skills}
+
+    ## 竞赛信息
+    - 竞赛名称：{competition_name}
+    - 参赛组别/赛道：{track}
+
+    ## 团队信息（如有）
+    {team_members}
+
+    ## 指导教师（如有）
+    {advisor}
+
+    请生成简洁的竞赛报名表，包含以下内容：
+    1. **基本信息**：姓名、学校、专业、年级、联系方式（选填）
+    2. **参赛信息**：竞赛名称、赛道/组别
+    3. **个人简介**（2-3 句）：专业背景和参赛动机
+    4. **技能与经历**：与竞赛相关的技能和过往经历
+    5. **团队成员**（如有）
+    6. **指导教师**（如有）
+
+  output_sections:
+    - section_id: "basic_info"
+      title: "基本信息"
+    - section_id: "competition_info"
+      title: "参赛信息"
+    - section_id: "personal_bio"
+      title: "个人简介"
+    - section_id: "skills"
+      title: "技能与经历"
+    - section_id: "team"
+      title: "团队成员"
+    - section_id: "advisor"
+      title: "指导教师"
+
+  format_spec:
+    output_type: "报名表"
+    page_suggestion: "1页"
+
+  checklist:
+    - "个人身份证明（学生证/身份证）"
+    - "报名费缴纳凭证（如有）"
+
+  tips:
+    - "只填写与本次竞赛相关的信息，不要堆砌无关内容"
+    - "联系方式选填，不提供则留空"
+    - "技能描述要具体：'Python 数据处理 2年经验' 优于 '精通Python'"
+
 # ============================================================
 # material_type 完整枚举（供 MaterialAgent 运行时查找）
 # ============================================================
@@ -2636,6 +2708,9 @@ material_type_index:
   # 通用模板
   generic_personal_resume:
     name: "竞赛报名个人简历"
+    category: "通用模板"
+  generic_registration_form:
+    name: "竞赛报名表（轻量）"
     category: "通用模板"
   generic_application_form:
     name: "通用申报书"

@@ -69,6 +69,7 @@ class MaterialAgent:
         # 通用模板
         "generic_personal_resume",
         "generic_application_form",
+        "generic_registration_form",
         "generic_project_report",
         "generic_ppt",
         "generic_team_description",
@@ -946,6 +947,22 @@ class MaterialAgent:
         if "checklist" in material_type or material_type in (
             "generic_budget", "generic_team_description", "generic_schedule",
         ):
+            return {"need_input": False, "message": ""}
+
+        # 轻量报名表：只检查用户基本信息
+        if material_type == "generic_registration_form":
+            up = user_profile or {}
+            if not up.get("name", "") and not up.get("major", ""):
+                return {
+                    "need_input": True,
+                    "message": (
+                        "生成报名表只需要你的基本信息，全部可选：\n\n"
+                        "  1. 你的姓名\n"
+                        "  2. 专业和年级\n"
+                        "  3. 参赛相关的技能或经历（选填）\n\n"
+                        "回复你想提供的即可，或直接说「生成」。"
+                    ),
+                }
             return {"need_input": False, "message": ""}
 
         # 个人简历：检查 user_profile 而非 project_info

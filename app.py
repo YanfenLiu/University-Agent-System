@@ -1340,10 +1340,12 @@ def _update_chat_state(
         "报名简历": "generic_personal_resume", "个人简历": "generic_personal_resume",
         "简历": "generic_personal_resume", "履历": "generic_personal_resume",
         "自我介绍": "generic_personal_resume",
-        # 申报书/申报表
-        "申报书": "generic_application_form", "申报表": "generic_application_form",
-        "报名表": "generic_application_form", "申请表": "generic_application_form",
-        "项目申报书": "generic_application_form", "申请书": "generic_application_form",
+        # 申报书（重模板，适合大挑/大创等项目申报）
+        "申报书": "generic_application_form", "项目申报书": "generic_application_form",
+        "申请书": "generic_application_form",
+        # 报名表（轻量，适合数学建模/算法赛等简单报名）
+        "报名表": "generic_registration_form", "申报表": "generic_registration_form",
+        "申请表": "generic_registration_form",
         # 计划书/报告（通用兜底，MaterialAgent 自动升级为竞赛专属）
         "计划书": "generic_project_report", "商业计划书": "generic_project_report",
         "创业计划书": "generic_project_report", "项目计划书": "generic_project_report",
